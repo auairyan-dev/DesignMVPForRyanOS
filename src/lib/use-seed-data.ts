@@ -5,8 +5,9 @@ import type { ActionItem, Conversation, Job, Quote } from "@/types/ryanos";
 
 export function useActionItems() {
   const [actionItems, setActionItems] = useState<ActionItem[]>(ACTION_ITEMS);
-  useEffect(() => { void listActionItems().then(setActionItems); }, []);
-  return { actionItems, setActionItems };
+  const refresh = () => { void listActionItems().then(setActionItems); };
+  useEffect(() => { refresh(); }, []);
+  return { actionItems, setActionItems, refresh };
 }
 
 export function useConversations() {

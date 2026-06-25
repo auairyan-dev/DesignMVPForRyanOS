@@ -20,3 +20,27 @@ export function listActionItems(): Promise<ActionItem[]> { return fetchJson("/ap
 export function getConversation(id: string): Promise<Conversation | undefined> { return Promise.resolve(INBOX.find(x => x.id === id)); }
 export function getJob(id: string): Promise<Job | undefined> { return Promise.resolve(JOBS.find(x => x.id === id)); }
 export function getQuote(id: string): Promise<Quote | undefined> { return Promise.resolve(QUOTES.find(x => x.id === id)); }
+
+// Phase 2: action item mutations. Best-effort — UI keeps optimistic local
+// state, so a failed call should not break the user experience. We swallow
+// errors deliberately and surface only via the boolean return value.
+async function postJson(url: string, body?: unknown): Promise<boolean> {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function completeActionItem(id: string): Promise<boolean> {
+  return postJson(`/api/v1/action-items/${encodeURIComponent(id)}/complete`);
+}
+
+export function snoozeActionItem(id: string, minutes: number = 60): Promise<boolean> {
+  return postJson(`/api/v1/action-items/${encodeURIComponent(id)}/snooze`, { minutes });
+}

@@ -20,6 +20,7 @@ import {
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
+import { completeActionItem, snoozeActionItem } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -363,7 +364,7 @@ function DashboardScreen({ onNavigate, onSelect, techSubmissions = [] }: {
   const [qFilter, setQFilter] = useState("All");
   const [showDone, setShowDone] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
-  const { actionItems } = useActionItems();
+  const { actionItems, refresh: refreshActionItems } = useActionItems();
 
   const setState = (id: string, state: "called" | "booked" | "snoozed" | "done") =>
     setItemStates(prev => ({ ...prev, [id]: state }));
@@ -614,11 +615,17 @@ function DashboardScreen({ onNavigate, onSelect, techSubmissions = [] }: {
                       <Btn key={i} variant="ghost" size="sm"
                         onClick={() => {
                           const a = action.toLowerCase();
-                          if (a.includes("snooze")) setState(item.id, "snoozed");
+                          if (a.includes("snooze")) {
+                            setState(item.id, "snoozed");
+                            void snoozeActionItem(item.id, 60).then(refreshActionItems);
+                          }
                           else if (a.includes("inbox")) onNavigate("inbox");
                           else if (a.includes("quote")) { if (item.linkedId) onSelect(item.linkedId); onNavigate("quote-detail"); }
                           else if (a.includes("job")) onNavigate("jobs");
-                          else if (a.includes("decline") || a.includes("not suitable") || a === "done") setState(item.id, "done");
+                          else if (a.includes("decline") || a.includes("not suitable") || a === "done") {
+                            setState(item.id, "done");
+                            void completeActionItem(item.id).then(refreshActionItems);
+                          }
                         }}
                       >{action}</Btn>
                     ))}
@@ -637,8 +644,8 @@ function DashboardScreen({ onNavigate, onSelect, techSubmissions = [] }: {
                       variant?: "danger" | "muted";
                       action: () => void;
                     }> = [
-                      { icon: Check,       label: "Mark as done",      variant: "muted", action: () => { setState(item.id, "done"); setExpandedCard(null); } },
-                      { icon: RefreshCw,   label: "Snooze for later",  variant: "muted", action: () => { setState(item.id, "snoozed"); setExpandedCard(null); } },
+                      { icon: Check,       label: "Mark as done",      variant: "muted", action: () => { setState(item.id, "done"); setExpandedCard(null); void completeActionItem(item.id).then(refreshActionItems); } },
+                      { icon: RefreshCw,   label: "Snooze for later",  variant: "muted", action: () => { setState(item.id, "snoozed"); setExpandedCard(null); void snoozeActionItem(item.id, 60).then(refreshActionItems); } },
                       { icon: Phone,       label: "Call customer",           action: () => { setState(item.id, "called"); setExpandedCard(null); } },
                       { icon: MessageSquare, label: "Send SMS",              action: () => { setState(item.id, "called"); setExpandedCard(null); } },
                       { icon: Inbox,       label: "Open in Inbox",           action: () => { if (item.linkedId) { onSelect(item.linkedId); } onNavigate("inbox"); } },
