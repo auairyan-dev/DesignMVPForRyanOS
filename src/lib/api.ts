@@ -60,3 +60,14 @@ export function convertQuoteToJob(id: string, opts?: { date?: string; time?: str
 export function updateJobInvoiceStatus(id: string, status: "draft" | "sent" | "paid" | "overdue"): Promise<boolean> {
   return postJson(`/api/v1/jobs/${encodeURIComponent(id)}/invoice-status`, { status });
 }
+
+export async function getJobInvoiceDraft(jobId: string): Promise<any | null> {
+  try {
+    const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/invoice-draft`);
+    if (!res.ok) return null;
+    const body = await res.json() as { ok?: boolean; draft?: any | null };
+    return body.draft ?? null;
+  } catch {
+    return null;
+  }
+}

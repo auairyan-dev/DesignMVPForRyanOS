@@ -78,6 +78,26 @@ const upsertInvoiceRow = db.prepare(`
     paid_at_ms = excluded.paid_at_ms
 `)
 
+const loadInvoiceDraftRows = db.prepare(`
+  SELECT invoice_id, job_id, customer_id, customer, status, line_items_json, subtotal, total, notes, created_at_ms, updated_at_ms
+  FROM invoice_drafts
+`)
+const upsertInvoiceDraftRow = db.prepare(`
+  INSERT INTO invoice_drafts (invoice_id, job_id, customer_id, customer, status, line_items_json, subtotal, total, notes, created_at_ms, updated_at_ms)
+  VALUES (@invoice_id, @job_id, @customer_id, @customer, @status, @line_items_json, @subtotal, @total, @notes, @created_at_ms, @updated_at_ms)
+  ON CONFLICT(invoice_id) DO UPDATE SET
+    job_id = excluded.job_id,
+    customer_id = excluded.customer_id,
+    customer = excluded.customer,
+    status = excluded.status,
+    line_items_json = excluded.line_items_json,
+    subtotal = excluded.subtotal,
+    total = excluded.total,
+    notes = excluded.notes,
+    created_at_ms = excluded.created_at_ms,
+    updated_at_ms = excluded.updated_at_ms
+`)
+
 export function loadAllOverlays() {
   const actionItems = new Map()
   for (const row of loadActionItemRows.all()) {
@@ -129,7 +149,24 @@ export function loadAllOverlays() {
     })
   }
 
-  return { actionItems, conversations, jobStatuses, convertedJobs, quoteStatuses, invoices }
+  const invoiceDrafts = new Map()
+  for (const row of loadInvoiceDraftRows.all()) {
+    invoiceDrafts.set(row.job_id, {
+      invoiceId: row.invoice_id,
+      jobId: row.job_id,
+      customerId: row.customer_id ?? undefined,
+      customer: row.customer,
+      status: row.status,
+      lineItems: JSON.parse(row.line_items_json),
+      subtotal: row.subtotal,
+      total: row.total,
+      notes: row.notes,
+      createdAt: row.created_at_ms,
+      updatedAt: row.updated_at_ms,
+    })
+  }
+
+  return { actionItems, conversations, jobStatuses, convertedJobs, quoteStatuses, invoices, invoiceDrafts }
 }
 
 export function saveActionItemOverlay(actionItemId, entry) {
@@ -182,5 +219,21 @@ export function saveInvoice(invoice) {
     created_at_ms: invoice.createdAt,
     sent_at_ms: invoice.sentAt ?? null,
     paid_at_ms: invoice.paidAt ?? null,
+  })
+}
+
+export function saveInvoiceDraft(draft) {
+  upsertInvoiceDraftRow.run({
+    invoice_id: draft.invoiceId,
+    job_id: draft.jobId,
+    customer_id: draft.customerId ?? null,
+    customer: draft.customer,
+    status: draft.status,
+    line_items_json: JSON.stringify(draft.lineItems),
+    subtotal: draft.subtotal,
+    total: draft.total,
+    notes: draft.notes,
+    created_at_ms: draft.createdAt,
+    updated_at_ms: draft.updatedAt,
   })
 }

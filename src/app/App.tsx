@@ -20,7 +20,7 @@ import {
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, convertQuoteToJob, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
+import { completeActionItem, convertQuoteToJob, getJobInvoiceDraft, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -3106,12 +3106,22 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   const [replyText, setReplyText] = useState("");
   const [sentReplies, setSentReplies] = useState<Record<string, InboxMsg[]>>({});
   const [msgPreview, setMsgPreview] = useState<{ recipient: string; channel: "sms" | "email"; message: string } | null>(null);
+  const [invoiceDrafts, setInvoiceDrafts] = useState<Record<string, any | null>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
 
   const isCalls = filter === "Calls";
   const conv = conversations.find(c => c.id === activeId) ?? conversations[0] ?? INBOX[0];
   const activeCall = isCalls ? (CALLS.find(c => c.id === activeCallId) ?? null) : null;
+
+  useEffect(() => {
+    const jobId = conv?.linkedJobId;
+    if (!jobId) return;
+    if (invoiceDrafts[jobId] !== undefined) return;
+    void getJobInvoiceDraft(jobId).then((draft) => {
+      setInvoiceDrafts(prev => ({ ...prev, [jobId]: draft }));
+    });
+  }, [conv?.linkedJobId, invoiceDrafts]);
 
   const reviewCount = conversations.filter(c => c.status === "needs-human" || c.status === "urgent").length;
   const urgentCount = conversations.filter(c => c.status === "urgent").length;
@@ -3608,6 +3618,19 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                       <p className="text-foreground text-sm">{conv.journey.paymentNote}</p>
                     </div>
                   )}
+                  {conv.linkedJobId && invoiceDrafts[conv.linkedJobId] && (
+                    <div className="mt-3 bg-violet-400/5 border border-violet-400/15 rounded-xl px-4 py-3">
+                      <p className="text-violet-400 text-xs font-semibold mb-2">Internal invoice draft</p>
+                      <div className="space-y-1 text-sm">
+                        <p className="text-foreground"><span className="text-muted-foreground">Invoice:</span> {invoiceDrafts[conv.linkedJobId]?.invoiceId}</p>
+                        <p className="text-foreground"><span className="text-muted-foreground">Customer:</span> {invoiceDrafts[conv.linkedJobId]?.customer}</p>
+                        <p className="text-foreground"><span className="text-muted-foreground">Line item:</span> {invoiceDrafts[conv.linkedJobId]?.lineItems?.[0]?.label}</p>
+                        <p className="text-foreground"><span className="text-muted-foreground">Total:</span> ${invoiceDrafts[conv.linkedJobId]?.total}</p>
+                        <p className="text-foreground"><span className="text-muted-foreground">Status:</span> {invoiceDrafts[conv.linkedJobId]?.status}</p>
+                        <p className="text-muted-foreground text-xs pt-1">{invoiceDrafts[conv.linkedJobId]?.notes}</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Linked records */}
@@ -3646,7 +3669,11 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                         onClick={() => {
                           if (!conv.linkedJobId) return;
                           void updateJobInvoiceStatus(conv.linkedJobId, "draft").then((ok) => {
-                            if (ok) refreshConversations();
+                            if (!ok) return;
+                            refreshConversations();
+                            void getJobInvoiceDraft(conv.linkedJobId!).then((draft) => {
+                              setInvoiceDrafts(prev => ({ ...prev, [conv.linkedJobId!]: draft }));
+                            });
                           });
                         }}
                       ><FileText size={12} /> Create invoice draft</Btn>
@@ -3656,7 +3683,11 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                         onClick={() => {
                           if (!conv.linkedJobId) return;
                           void updateJobInvoiceStatus(conv.linkedJobId, "sent").then((ok) => {
-                            if (ok) refreshConversations();
+                            if (!ok) return;
+                            refreshConversations();
+                            void getJobInvoiceDraft(conv.linkedJobId!).then((draft) => {
+                              setInvoiceDrafts(prev => ({ ...prev, [conv.linkedJobId!]: draft }));
+                            });
                           });
                         }}
                       ><Check size={12} /> Mark invoice as sent</Btn>
@@ -3671,7 +3702,11 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                       onClick={() => {
                         if (!conv.linkedJobId) return;
                         void updateJobInvoiceStatus(conv.linkedJobId, "paid").then((ok) => {
-                          if (ok) refreshConversations();
+                          if (!ok) return;
+                          refreshConversations();
+                          void getJobInvoiceDraft(conv.linkedJobId!).then((draft) => {
+                            setInvoiceDrafts(prev => ({ ...prev, [conv.linkedJobId!]: draft }));
+                          });
                         });
                       }}
                     ><Check size={12} /> Mark as paid</Btn>
@@ -3687,7 +3722,11 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                       onClick={() => {
                         if (!conv.linkedJobId) return;
                         void updateJobInvoiceStatus(conv.linkedJobId, "paid").then((ok) => {
-                          if (ok) refreshConversations();
+                          if (!ok) return;
+                          refreshConversations();
+                          void getJobInvoiceDraft(conv.linkedJobId!).then((draft) => {
+                            setInvoiceDrafts(prev => ({ ...prev, [conv.linkedJobId!]: draft }));
+                          });
                         });
                       }}
                     ><Check size={12} /> Mark as paid</Btn>

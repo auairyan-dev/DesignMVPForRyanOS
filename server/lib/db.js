@@ -53,6 +53,20 @@ db.exec(`
     sent_at_ms INTEGER NULL,
     paid_at_ms INTEGER NULL
   );
+
+  CREATE TABLE IF NOT EXISTS invoice_drafts (
+    invoice_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL UNIQUE,
+    customer_id TEXT NULL,
+    customer TEXT NOT NULL,
+    status TEXT NOT NULL,
+    line_items_json TEXT NOT NULL,
+    subtotal INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    notes TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+  );
 `)
 
 export { db, dbPath }

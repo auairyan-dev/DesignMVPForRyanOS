@@ -8,6 +8,7 @@ import {
   saveConversationMessage,
   saveConvertedJob,
   saveInvoice,
+  saveInvoiceDraft,
   saveJobStatus,
   saveQuoteStatus,
 } from './lib/overlay-store.js'
@@ -231,6 +232,8 @@ function overlaidConvertedJob(quoteId) {
 // delivery, payment collection, SMS, or email happens in this phase.
 /** @type {Map<string, { jobId: string, invoiceId: string, status: 'draft' | 'sent' | 'paid' | 'overdue', amount: [number, number], note: string, createdAt: number, sentAt?: number, paidAt?: number }>} */
 const invoiceOverlay = new Map(persisted.invoices)
+/** @type {Map<string, { invoiceId: string, jobId: string, customerId?: string, customer: string, status: 'draft', lineItems: Array<{ id: string, label: string, qty: number, unitPrice: number, total: number }>, subtotal: number, total: number, notes: string, createdAt: number, updatedAt: number }>} */
+const invoiceDrafts = new Map(persisted.invoiceDrafts)
 
 const KNOWN_INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'overdue'])
 const ALLOWED_INVOICE_TRANSITIONS = new Map([
@@ -308,6 +311,42 @@ function applyConversationPaymentOverlay(conversations) {
 function effectiveInvoiceStatus(jobId) {
   const invoice = invoiceOverlay.get(jobId)
   return invoice ? invoice.status : null
+}
+
+function getInvoiceDraftByJobId(jobId) {
+  return invoiceDrafts.get(jobId) || null
+}
+
+function createInvoiceDraftFromJob(job) {
+  const existing = getInvoiceDraftByJobId(job.id)
+  if (existing) return existing
+  const selectedDraftAmount = Array.isArray(job.value) ? job.value[1] : 0
+  const now = Date.now()
+  const lineLabel = job.type || job.title || 'Trade service'
+  const draft = {
+    invoiceId: `inv-${job.id}`,
+    jobId: job.id,
+    customerId: job.customerId || undefined,
+    customer: job.customer,
+    status: 'draft',
+    lineItems: [
+      {
+        id: 'li-1',
+        label: lineLabel,
+        qty: 1,
+        unitPrice: selectedDraftAmount,
+        total: selectedDraftAmount,
+      },
+    ],
+    subtotal: selectedDraftAmount,
+    total: selectedDraftAmount,
+    notes: 'Internal draft only. Review before sending. Not delivered by RyanOS.',
+    createdAt: now,
+    updatedAt: now,
+  }
+  invoiceDrafts.set(job.id, draft)
+  saveInvoiceDraft(draft)
+  return draft
 }
 
 function hasSeedReadyToInvoiceConversation(jobId) {
@@ -469,6 +508,16 @@ app.post('/api/v1/quotes/:id/convert-to-job', async (req, reply) => {
   return { ok: true, quoteId: id, quote: overlaidQuote, job, idempotent: false, noop: false }
 })
 
+app.get('/api/v1/jobs/:id/invoice-draft', async (req) => {
+  const { id } = req.params
+  const job = findJobById(id)
+  if (!job) {
+    return { ok: true, draft: null, noop: true }
+  }
+  const draft = getInvoiceDraftByJobId(id)
+  return { ok: true, draft }
+})
+
 app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
   const { id } = req.params
   const status = parseInvoiceStatusBody(req.body)
@@ -482,7 +531,7 @@ app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
   }
   const job = findJobById(id)
   if (!job) {
-    return { ok: true, id, invoice: null, from: null, to: status, noop: true }
+    return { ok: true, id, invoice: null, draft: null, from: null, to: status, noop: true }
   }
   const existing = invoiceOverlay.get(id)
   const from = effectiveInvoiceStatus(id)
@@ -499,7 +548,7 @@ app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
     }
   }
   if (from === status) {
-    return { ok: true, id, invoice: existing, from, to: status, noop: true }
+    return { ok: true, id, invoice: existing, draft: getInvoiceDraftByJobId(id), from, to: status, noop: true }
   }
   if (!isInvoiceTransitionAllowed(from, status)) {
     reply.code(400)
@@ -512,6 +561,10 @@ app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
     }
   }
   const now = Date.now()
+  let draft = getInvoiceDraftByJobId(id)
+  if (status === 'draft') {
+    draft = createInvoiceDraftFromJob(job)
+  }
   const invoice = {
     jobId: id,
     invoiceId: `inv-${id}`,
@@ -525,7 +578,16 @@ app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
   invoice.note = buildInvoiceNote(job, invoice)
   invoiceOverlay.set(id, invoice)
   saveInvoice(invoice)
-  return { ok: true, id, invoice, from, to: status, noop: false }
+  if (draft) {
+    const updatedDraft = {
+      ...draft,
+      updatedAt: now,
+    }
+    invoiceDrafts.set(id, updatedDraft)
+    saveInvoiceDraft(updatedDraft)
+    draft = updatedDraft
+  }
+  return { ok: true, id, invoice, draft: draft ?? null, from, to: status, noop: false }
 })
 
 app.listen({ port, host: '0.0.0.0' })
