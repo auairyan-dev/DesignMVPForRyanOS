@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
+import { listActionItems, listConversations } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -362,11 +363,14 @@ function DashboardScreen({ onNavigate, onSelect, techSubmissions = [] }: {
   const [qFilter, setQFilter] = useState("All");
   const [showDone, setShowDone] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [actionItems, setActionItems] = useState(ACTION_ITEMS);
+
+  useEffect(() => { void listActionItems().then(setActionItems); }, []);
 
   const setState = (id: string, state: "called" | "booked" | "snoozed" | "done") =>
     setItemStates(prev => ({ ...prev, [id]: state }));
 
-  const pendingItems = ACTION_ITEMS.filter(item => {
+  const pendingItems = actionItems.filter(item => {
     const s = itemStates[item.id] || "pending";
     if (s !== "pending") return false;
     if (qFilter === "All") return true;
@@ -377,12 +381,12 @@ function DashboardScreen({ onNavigate, onSelect, techSubmissions = [] }: {
     return true;
   });
 
-  const doneItems = ACTION_ITEMS.filter(item => {
+  const doneItems = actionItems.filter(item => {
     const s = itemStates[item.id] || "pending";
     return s !== "pending";
   });
 
-  const pendingCount = ACTION_ITEMS.filter(i => !itemStates[i.id] || itemStates[i.id] === "pending").length;
+  const pendingCount = actionItems.filter(i => !itemStates[i.id] || itemStates[i.id] === "pending").length;
 
   type PriorityKey = "urgent" | "accepted" | "quote-reply" | "needs-review" | "missed-call" | "ready-invoice";
   const PRIORITY: Record<PriorityKey, {
@@ -3069,6 +3073,7 @@ function GoLiveScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ─── INBOX SCREEN ────────────────────────────────────────────────────────────
 
 function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { onNavigate: (s: Screen, id?: string) => void; onSelect: (id: string) => void; initialFilter?: string; initialConvId?: string }) {
+  const [conversations, setConversations] = useState(INBOX);
   const [activeId, setActiveId] = useState(() => {
     if (initialConvId && INBOX.find(c => c.id === initialConvId)) return initialConvId;
     return INBOX[0].id;
@@ -3080,17 +3085,19 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   const [msgPreview, setMsgPreview] = useState<{ recipient: string; channel: "sms" | "email"; message: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => { void listConversations().then(setConversations); }, []);
+
   const isCalls = filter === "Calls";
-  const conv = INBOX.find(c => c.id === activeId) ?? INBOX[0];
+  const conv = conversations.find(c => c.id === activeId) ?? conversations[0] ?? INBOX[0];
   const activeCall = isCalls ? (CALLS.find(c => c.id === activeCallId) ?? null) : null;
 
-  const reviewCount = INBOX.filter(c => c.status === "needs-human" || c.status === "urgent").length;
-  const urgentCount = INBOX.filter(c => c.status === "urgent").length;
-  const humanCount = INBOX.filter(c => c.status === "needs-human").length;
-  const unreadCount = INBOX.filter(c => c.unread > 0).length;
+  const reviewCount = conversations.filter(c => c.status === "needs-human" || c.status === "urgent").length;
+  const urgentCount = conversations.filter(c => c.status === "urgent").length;
+  const humanCount = conversations.filter(c => c.status === "needs-human").length;
+  const unreadCount = conversations.filter(c => c.unread > 0).length;
   const callsNeedReview = CALLS.filter(c => c.needsReview).length;
 
-  const filtered = isCalls ? [] : INBOX.filter(c => {
+  const filtered = isCalls ? [] : conversations.filter(c => {
     if (filter === "All") return true;
     if (filter === "Needs review") return c.status === "needs-human" || c.status === "urgent";
     if (filter === "Urgent") return c.status === "urgent";
@@ -4511,7 +4518,7 @@ function MobileApp() {
 
             {/* Customer + quick actions */}
             {(() => {
-              const linkedConv = INBOX.find(c => c.customerId === job.customerId);
+              const linkedConv = conversations.find(c => c.customerId === job.customerId);
               return (
                 <div className="bg-card border border-border rounded-2xl p-4">
                   <div className="flex items-start justify-between mb-3">
@@ -5379,10 +5386,10 @@ function MobileApp() {
           <div className="p-4 space-y-5">
             <div>
               <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide mb-2">
-                Action queue · {ACTION_ITEMS.filter(i => !actionStates[i.id]).length} pending
+                Action queue · {actionItems.filter(i => !actionStates[i.id]).length} pending
               </p>
               <div className="space-y-3">
-                {ACTION_ITEMS.slice(0, 5).filter(item => !actionStates[item.id]).map(item => {
+                {actionItems.slice(0, 5).filter(item => !actionStates[item.id]).map(item => {
                   const isUrgent = item.priority === "urgent";
                   const isReady = item.priority === "accepted" || item.priority === "ready-invoice";
                   const borderCls = isUrgent ? "border-red-400/30" : isReady ? "border-emerald-400/25" : "border-amber-400/20";
@@ -5495,7 +5502,7 @@ function MobileApp() {
                     </div>
                   );
                 })}
-                {ACTION_ITEMS.filter(i => !actionStates[i.id]).length === 0 && (
+                {actionItems.filter(i => !actionStates[i.id]).length === 0 && (
                   <div className="bg-card border border-border rounded-2xl p-5 text-center">
                     <CheckCircle size={24} className="text-emerald-400 mx-auto mb-2" />
                     <p className="text-foreground text-sm font-semibold">All clear</p>
@@ -5634,7 +5641,7 @@ function MobileApp() {
             <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
               {urgentCount} need attention
             </p>
-            {INBOX.map(conv => {
+            {conversations.map(conv => {
               const isUrgent = conv.status === "urgent";
               const needsHuman = conv.status === "needs-human";
               const chanLabel: Record<string, string> = { sms: "SMS", email: "Email", web: "Web form", handoff: "AI escalation", call: "Call" };
@@ -6499,7 +6506,7 @@ function TechnicianApp({ onSubmit, onSwitchRole }: {
           <div className="space-y-2.5">
             {/* Conversation button — shows unread badge if messages exist */}
             {(() => {
-              const linkedConv = INBOX.find(c => c.customerId === job.customerId);
+              const linkedConv = conversations.find(c => c.customerId === job.customerId);
               const msgCount = linkedConv?.messages.filter(m => m.from === "customer").length || 0;
               return (
                 <button
@@ -6562,7 +6569,7 @@ function TechnicianApp({ onSubmit, onSwitchRole }: {
 
   /* ── CONVERSATION ── */
   if (screen === "conversation" && job) {
-    const linkedConv = INBOX.find(c => c.customerId === job.customerId);
+    const linkedConv = conversations.find(c => c.customerId === job.customerId);
     const replies = selectedJobId ? (techReplies[selectedJobId] || []) : [];
 
     const sendTechReply = () => {
