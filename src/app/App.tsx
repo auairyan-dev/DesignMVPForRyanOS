@@ -19,7 +19,7 @@ import {
 } from "recharts";
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
-import { useActionItems, useConversations } from "@/lib/use-seed-data";
+import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -1102,13 +1102,14 @@ function CallDetailScreen({
 // ─── JOBS LIST ────────────────────────────────────────────────────────────────
 
 function JobsScreen({ onNavigate, onSelect }: { onNavigate: (s: Screen, id?: string) => void; onSelect: (id: string) => void }) {
+  const { jobs } = useJobs();
   const [filter, setFilter] = useState("All");
   const filters = ["All", "Today", "Needs review", "Booked", "Unscheduled"];
   const [showCreate, setShowCreate] = useState(false);
   const [newJobForm, setNewJobForm] = useState({ customer: "", jobType: "", suburb: "", date: "Today", time: "9:00 AM", urgency: "Normal", notes: "" });
-  const [desktopCreatedJobs, setDesktopCreatedJobs] = useState<typeof JOBS>([]);
+  const [desktopCreatedJobs, setDesktopCreatedJobs] = useState<Job[]>([]);
 
-  const filtered = JOBS.filter(j => {
+  const filtered = jobs.filter(j => {
     if (filter === "All") return true;
     if (filter === "Today") return j.date === "Today";
     if (filter === "Needs review") return j.status === "Needs review";
@@ -1122,7 +1123,7 @@ function JobsScreen({ onNavigate, onSelect }: { onNavigate: (s: Screen, id?: str
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-foreground text-xl font-bold">Jobs</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">{JOBS.length} total · 3 today · est. $3,840–$5,246</p>
+          <p className="text-muted-foreground text-sm mt-0.5">{jobs.length} total · 3 today · est. $3,840–$5,246</p>
         </div>
         <Btn variant="primary" onClick={() => setShowCreate(v => !v)}>
           <Plus size={14} /> {showCreate ? "Cancel" : "New job"}
@@ -1331,7 +1332,8 @@ function JobDetailScreen({
 }: {
   jobId: string; onBack: () => void; onNavigate: (s: Screen, id?: string) => void; onSelect: (id: string) => void;
 }) {
-  const job = JOBS.find(j => j.id === jobId) ?? JOBS[0];
+  const { jobs } = useJobs();
+  const job = jobs.find(j => j.id === jobId) ?? jobs[0] ?? JOBS[0];
   const customer = CUSTOMERS.find(c => c.id === job.customerId);
 
   return (
@@ -1695,15 +1697,16 @@ function CustomerDetailScreen({ customerId, onBack }: { customerId: string; onBa
 // ─── QUOTES LIST ──────────────────────────────────────────────────────────────
 
 function QuotesScreen({ onNavigate, onSelect }: { onNavigate: (s: Screen, id?: string) => void; onSelect: (id: string) => void }) {
+  const { quotes } = useQuotes();
   const [filter, setFilter] = useState("All");
   const filters = ["All", "Needs approval", "Sent", "Follow-up due", "Accepted"];
 
-  const filtered = QUOTES.filter(q => {
+  const filtered = quotes.filter(q => {
     if (filter === "All") return true;
     return q.status === filter;
   });
 
-  const pendingValue = QUOTES.filter(q => q.status === "Needs approval").reduce((s, q) => s + q.amount[1], 0);
+  const pendingValue = quotes.filter(q => q.status === "Needs approval").reduce((s, q) => s + q.amount[1], 0);
 
   return (
     <div className="p-7">
@@ -1711,7 +1714,7 @@ function QuotesScreen({ onNavigate, onSelect }: { onNavigate: (s: Screen, id?: s
         <div>
           <h1 className="text-foreground text-xl font-bold">Quotes</h1>
           <p className="text-muted-foreground text-sm mt-0.5">
-            {QUOTES.length} quotes · <span className="text-amber-400 font-medium">2 need approval</span> · {fmt(pendingValue)} pending revenue
+            {quotes.length} quotes · <span className="text-amber-400 font-medium">2 need approval</span> · {fmt(pendingValue)} pending revenue
           </p>
         </div>
         <Btn variant="primary" onClick={() => onNavigate("quote-builder")}><Plus size={14} /> New quote</Btn>
@@ -1802,7 +1805,8 @@ function QuoteDetailScreen({
 }: {
   quoteId: string; onBack: () => void; onNavigate?: (s: Screen, id?: string) => void;
 }) {
-  const q = QUOTES.find(x => x.id === quoteId) ?? QUOTES[0];
+  const { quotes } = useQuotes();
+  const q = quotes.find(x => x.id === quoteId) ?? quotes[0] ?? QUOTES[0];
   const [approved, setApproved] = useState(q.status === "Accepted");
   const [convertStep, setConvertStep] = useState<"idle" | "choosing" | "confirmed">(
     q.status === "Accepted" ? "idle" : "idle"
@@ -4416,9 +4420,11 @@ function MobileApp() {
   const goToQuote = (id: string) => { setSelectedQuoteId(id); setScreen("quote-detail"); };
   const goBack = () => { setScreen(tab); };
 
-  const job = JOBS.find(j => j.id === selectedJobId);
+  const { jobs } = useJobs();
+  const { quotes } = useQuotes();
+  const job = jobs.find(j => j.id === selectedJobId) ?? JOBS.find(j => j.id === selectedJobId);
   const conv = conversations.find(c => c.id === selectedConvId) ?? INBOX.find(c => c.id === selectedConvId);
-  const quote = QUOTES.find(q => q.id === selectedQuoteId);
+  const quote = quotes.find(q => q.id === selectedQuoteId) ?? QUOTES.find(q => q.id === selectedQuoteId);
 
   const urgentCount = conversations.filter(c => c.status === "urgent" || c.status === "needs-human").length;
 
