@@ -20,7 +20,7 @@ import {
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, convertQuoteToJob, snoozeActionItem, sendConversationMessage, updateJobStatus } from "@/lib/api";
+import { completeActionItem, convertQuoteToJob, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -3640,21 +3640,57 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                   <div>
                     <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide mb-2">Invoice actions</p>
                     <div className="flex gap-2 flex-wrap">
-                      <Btn size="sm" variant="primary"><FileText size={12} /> Create invoice draft</Btn>
-                      <Btn size="sm" variant="secondary"><Check size={12} /> Mark invoice as sent</Btn>
+                      <Btn
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          if (!conv.linkedJobId) return;
+                          void updateJobInvoiceStatus(conv.linkedJobId, "draft").then((ok) => {
+                            if (ok) refreshConversations();
+                          });
+                        }}
+                      ><FileText size={12} /> Create invoice draft</Btn>
+                      <Btn
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          if (!conv.linkedJobId) return;
+                          void updateJobInvoiceStatus(conv.linkedJobId, "sent").then((ok) => {
+                            if (ok) refreshConversations();
+                          });
+                        }}
+                      ><Check size={12} /> Mark invoice as sent</Btn>
                     </div>
                   </div>
                 )}
                 {conv.journey.paymentStatus === "invoice-sent" && (
                   <div className="flex gap-2">
-                    <Btn size="sm" variant="primary"><Check size={12} /> Mark as paid</Btn>
-                    <Btn size="sm" variant="secondary"><Send size={12} /> Send reminder</Btn>
+                    <Btn
+                      size="sm"
+                      variant="primary"
+                      onClick={() => {
+                        if (!conv.linkedJobId) return;
+                        void updateJobInvoiceStatus(conv.linkedJobId, "paid").then((ok) => {
+                          if (ok) refreshConversations();
+                        });
+                      }}
+                    ><Check size={12} /> Mark as paid</Btn>
+                    <Btn size="sm" variant="secondary">Reminder not sent yet</Btn>
                   </div>
                 )}
                 {conv.journey.paymentStatus === "overdue" && (
                   <div className="flex gap-2">
-                    <Btn size="sm" variant="danger"><Send size={12} /> Send overdue reminder</Btn>
-                    <Btn size="sm" variant="secondary"><Phone size={12} /> Call about payment</Btn>
+                    <Btn size="sm" variant="secondary">Reminder not sent yet</Btn>
+                    <Btn
+                      size="sm"
+                      variant="primary"
+                      onClick={() => {
+                        if (!conv.linkedJobId) return;
+                        void updateJobInvoiceStatus(conv.linkedJobId, "paid").then((ok) => {
+                          if (ok) refreshConversations();
+                        });
+                      }}
+                    ><Check size={12} /> Mark as paid</Btn>
                   </div>
                 )}
 

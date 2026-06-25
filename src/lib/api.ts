@@ -56,3 +56,7 @@ export function updateJobStatus(id: string, status: string): Promise<boolean> {
 export function convertQuoteToJob(id: string, opts?: { date?: string; time?: string }): Promise<boolean> {
   return postJson(`/api/v1/quotes/${encodeURIComponent(id)}/convert-to-job`, opts ?? {});
 }
+
+export function updateJobInvoiceStatus(id: string, status: "draft" | "sent" | "paid" | "overdue"): Promise<boolean> {
+  return postJson(`/api/v1/jobs/${encodeURIComponent(id)}/invoice-status`, { status });
+}

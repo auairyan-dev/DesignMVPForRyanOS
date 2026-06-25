@@ -206,11 +206,109 @@ function overlaidConvertedJob(quoteId) {
   return { ...base, status: override }
 }
 
+// Phase 6: in-memory invoice/payment overlay keyed by Job.id. This is an
+// internal bookkeeping state machine only — no real invoice generation,
+// delivery, payment collection, SMS, or email happens in this phase.
+/** @type {Map<string, { jobId: string, invoiceId: string, status: 'draft' | 'sent' | 'paid' | 'overdue', amount: [number, number], note: string, createdAt: number, sentAt?: number, paidAt?: number }>} */
+const invoiceOverlay = new Map()
+
+const KNOWN_INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'overdue'])
+const ALLOWED_INVOICE_TRANSITIONS = new Map([
+  ['draft', new Set(['sent'])],
+  ['sent', new Set(['paid', 'overdue'])],
+  ['overdue', new Set(['paid'])],
+])
+
+function findJobById(id) {
+  const seedJob = JOBS.find(j => j.id === id)
+  if (seedJob) return seedJob
+  return [...convertedJobs.values()].find(j => j.id === id) || null
+}
+
+function parseInvoiceStatusBody(body) {
+  if (body == null || typeof body !== 'object') return null
+  const raw = body.status
+  if (typeof raw !== 'string') return null
+  const status = raw.trim()
+  if (!KNOWN_INVOICE_STATUSES.has(status)) return null
+  return status
+}
+
+function buildInvoiceNote(job, invoice) {
+  const base = `${job.title} · ${job.date} · ${job.time} · ${job.value[0]}–${job.value[1]}`
+  if (invoice.status === 'draft') return `${base} · Invoice draft created`
+  if (invoice.status === 'sent') return `${base} · Invoice marked as sent`
+  if (invoice.status === 'paid') return `${base} · Payment marked as paid`
+  return `${base} · Payment marked as overdue`
+}
+
+function projectConversationPayment(conversation) {
+  if (!conversation.linkedJobId) return conversation
+  const invoice = invoiceOverlay.get(conversation.linkedJobId)
+  if (!invoice) return conversation
+  const job = findJobById(conversation.linkedJobId)
+  if (!job) return conversation
+  const paymentStatus = invoice.status === 'draft'
+    ? 'ready-to-invoice'
+    : invoice.status === 'sent'
+      ? 'invoice-sent'
+      : invoice.status === 'paid'
+        ? 'paid'
+        : 'overdue'
+  const currentStage = invoice.status === 'paid'
+    ? 'Paid'
+    : invoice.status === 'overdue'
+      ? 'Overdue'
+      : invoice.status === 'sent'
+        ? 'Invoice sent'
+        : 'Invoice draft'
+  const nextAction = invoice.status === 'draft'
+    ? 'Review the draft and mark it as sent when you are ready.'
+    : invoice.status === 'sent'
+      ? 'Wait for payment or mark this invoice as overdue later if needed.'
+      : invoice.status === 'paid'
+        ? 'Payment is recorded internally. No external action has been taken by RyanOS.'
+        : 'Follow up manually outside RyanOS if needed, or mark payment as paid when received.'
+  return {
+    ...conversation,
+    journey: {
+      ...conversation.journey,
+      currentStage,
+      nextAction,
+      paymentStatus,
+      paymentNote: buildInvoiceNote(job, invoice),
+    },
+  }
+}
+
+function applyConversationPaymentOverlay(conversations) {
+  return conversations.map(projectConversationPayment)
+}
+
+function effectiveInvoiceStatus(jobId) {
+  const invoice = invoiceOverlay.get(jobId)
+  return invoice ? invoice.status : null
+}
+
+function hasSeedReadyToInvoiceConversation(jobId) {
+  return INBOX.some(conv => conv.linkedJobId === jobId && conv.journey?.paymentStatus === 'ready-to-invoice')
+}
+
+function isInvoiceTransitionAllowed(from, to) {
+  if (from === null) return to === 'draft'
+  const allowed = ALLOWED_INVOICE_TRANSITIONS.get(from)
+  if (!allowed) return false
+  return allowed.has(to)
+}
+
 app.get('/api/v1/health', async () => ({ ok: true }))
 
 app.get('/api/v1/action-items', async () => applyOverlay(ACTION_ITEMS))
 
-app.get('/api/v1/conversations', async () => applyConversationOverlay(INBOX))
+app.get('/api/v1/conversations', async () => {
+  const withMessages = applyConversationOverlay(INBOX)
+  return applyConversationPaymentOverlay(withMessages)
+})
 
 app.get('/api/v1/jobs', async () => {
   const seedWithStatus = applyJobStatusOverlay(JOBS)
@@ -286,9 +384,7 @@ app.post('/api/v1/jobs/:id/status', async (req, reply) => {
       message: 'status must be one of the known job status strings',
     }
   }
-  const seedJob = JOBS.find(j => j.id === id)
-  const convertedJob = [...convertedJobs.values()].find(j => j.id === id)
-  const job = seedJob || convertedJob
+  const job = findJobById(id)
   if (!job) {
     return { ok: true, id, from: null, to: status, job: null, noop: true }
   }
@@ -345,6 +441,64 @@ app.post('/api/v1/quotes/:id/convert-to-job', async (req, reply) => {
   quoteStatusOverlay.set(id, 'Accepted')
   const overlaidQuote = applyQuoteStatusOverlay([quote])[0]
   return { ok: true, quoteId: id, quote: overlaidQuote, job, idempotent: false, noop: false }
+})
+
+app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
+  const { id } = req.params
+  const status = parseInvoiceStatusBody(req.body)
+  if (status === null) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_invoice_status',
+      message: 'status must be one of: draft, sent, paid, overdue',
+    }
+  }
+  const job = findJobById(id)
+  if (!job) {
+    return { ok: true, id, invoice: null, from: null, to: status, noop: true }
+  }
+  const existing = invoiceOverlay.get(id)
+  const from = effectiveInvoiceStatus(id)
+  const jobReady = effectiveJobStatus(job) === 'Ready to invoice'
+  const seedReady = hasSeedReadyToInvoiceConversation(id)
+  if (!existing && !jobReady && !seedReady) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_invoice_transition',
+      message: 'job must be Ready to invoice before invoice workflow can start',
+      from,
+      to: status,
+    }
+  }
+  if (from === status) {
+    return { ok: true, id, invoice: existing, from, to: status, noop: true }
+  }
+  if (!isInvoiceTransitionAllowed(from, status)) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_invoice_transition',
+      message: `cannot move invoice from "${from ?? 'none'}" to "${status}"`,
+      from,
+      to: status,
+    }
+  }
+  const now = Date.now()
+  const invoice = {
+    jobId: id,
+    invoiceId: `inv-${id}`,
+    status,
+    amount: job.value,
+    note: '',
+    createdAt: existing?.createdAt ?? now,
+    sentAt: status === 'sent' ? now : existing?.sentAt,
+    paidAt: status === 'paid' ? now : existing?.paidAt,
+  }
+  invoice.note = buildInvoiceNote(job, invoice)
+  invoiceOverlay.set(id, invoice)
+  return { ok: true, id, invoice, from, to: status, noop: false }
 })
 
 app.listen({ port, host: '0.0.0.0' })
