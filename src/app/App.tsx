@@ -17,10 +17,10 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import type { ActionItem, Call, Conversation, Customer, Job, NavItem, OutboxItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
+import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Operator, OutboxItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, convertQuoteToJob, createJobOutboxItem, getJobInvoiceDraft, listJobOutboxItems, markOutboxItemReady, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
+import { completeActionItem, convertQuoteToJob, createJobOutboxItem, getJobInvoiceDraft, getMe, listJobOutboxItems, login, logout, markOutboxItemReady, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -3648,6 +3648,9 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                         {outboxByJob[conv.linkedJobId][0].subject && <p className="text-foreground"><span className="text-muted-foreground">Subject:</span> {outboxByJob[conv.linkedJobId][0].subject}</p>}
                         <p className="text-foreground"><span className="text-muted-foreground">Body:</span> {outboxByJob[conv.linkedJobId][0].body}</p>
                         <p className="text-muted-foreground text-xs pt-1">{outboxByJob[conv.linkedJobId][0].notes}</p>
+                        {outboxByJob[conv.linkedJobId][0].approvedByName && (
+                          <p className="text-blue-300 text-xs pt-1">Marked ready by {outboxByJob[conv.linkedJobId][0].approvedByName}</p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -6939,6 +6942,10 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [userRole, setUserRole] = useState<"none" | "owner" | "technician">("none");
+  const [operator, setOperator] = useState<Operator | null>(null);
+  const [loginEmail, setLoginEmail] = useState("ryan@example.local");
+  const [loginPassword, setLoginPassword] = useState("ryanos-demo");
+  const [loginError, setLoginError] = useState("");
   const [techSubmissions, setTechSubmissions] = useState<Array<{
     id: string; jobId: string; customerName: string; jobTitle: string;
     notes: string; internalNote: string; extra: string; flagged: boolean;
@@ -6951,6 +6958,10 @@ export default function App() {
     const handler = () => setMobile(window.innerWidth < 768);
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
+  }, []);
+
+  useEffect(() => {
+    void getMe().then(setOperator);
   }, []);
 
   const navigate = (s: Screen, id?: string) => {
@@ -6989,10 +7000,42 @@ export default function App() {
 
   const pg = PAGE_TITLES[screen] ?? { title: screen, sub: "" };
 
+  const loginPanel = (
+    <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <div className="w-full max-w-md bg-card border border-border rounded-2xl p-6 space-y-4">
+        <div>
+          <h1 className="text-foreground text-xl font-bold">Demo operator login</h1>
+          <p className="text-muted-foreground text-sm mt-1">Reads stay visible in demo mode. Sign in to make changes.</p>
+        </div>
+        <div>
+          <label className="text-foreground text-xs font-medium block mb-1.5">Email</label>
+          <input className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-foreground text-xs font-medium block mb-1.5">Password</label>
+          <input type="password" className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
+        </div>
+        {loginError && <p className="text-red-400 text-sm">{loginError}</p>}
+        <Btn variant="primary" full onClick={() => {
+          setLoginError("");
+          void login(loginEmail, loginPassword).then((op) => {
+            if (!op) {
+              setLoginError("Invalid demo credentials");
+              return;
+            }
+            setOperator(op);
+          });
+        }}>Sign in</Btn>
+      </div>
+    </div>
+  );
+
+  if (!operator) return loginPanel;
+
   return (
     <div className={`bg-background min-h-screen ${theme === "light" ? "light" : ""}`}>
       <Sidebar screen={screen} onNavigate={navigate} />
-      <TopBar title={pg.title} sub={pg.sub} onNavigate={navigate} theme={theme} onToggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")} />
+      <TopBar title={pg.title} sub={`${pg.sub}${operator ? ` · ${operator.name}` : ""}`} onNavigate={navigate} theme={theme} onToggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")} />
 
       <main className="pl-60 pt-14 min-h-screen">
         {screen === "dashboard" && (
@@ -7057,6 +7100,10 @@ export default function App() {
         {screen === "ai-assistant" && <AIAssistantScreen />}
         {screen === "settings" && <SettingsScreen onNavigate={navigate} />}
         {screen === "go-live" && <GoLiveScreen onNavigate={navigate} />}
+        <div className="px-7 pt-4 flex justify-end gap-2">
+          <span className="text-muted-foreground text-sm">Signed in as {operator.name}</span>
+          <Btn variant="secondary" onClick={() => { void logout().then(() => setOperator(null)); }}>Logout</Btn>
+        </div>
         {screen === "invoice-upload" && (
           <div className="p-7 max-w-lg">
             <h1 className="text-foreground text-xl font-bold mb-2">Upload past invoices</h1>

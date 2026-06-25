@@ -99,12 +99,12 @@ const upsertInvoiceDraftRow = db.prepare(`
 `)
 
 const loadOutboxRows = db.prepare(`
-  SELECT outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, status, subject, body, notes, created_at_ms, updated_at_ms, approved_at_ms
+  SELECT outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, status, subject, body, notes, created_at_ms, updated_at_ms, approved_at_ms, approved_by_operator_id, approved_by_name
   FROM outbox_items
 `)
 const upsertOutboxRow = db.prepare(`
-  INSERT INTO outbox_items (outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, status, subject, body, notes, created_at_ms, updated_at_ms, approved_at_ms)
-  VALUES (@outbox_id, @job_id, @invoice_id, @customer_id, @customer, @kind, @channel, @status, @subject, @body, @notes, @created_at_ms, @updated_at_ms, @approved_at_ms)
+  INSERT INTO outbox_items (outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, status, subject, body, notes, created_at_ms, updated_at_ms, approved_at_ms, approved_by_operator_id, approved_by_name)
+  VALUES (@outbox_id, @job_id, @invoice_id, @customer_id, @customer, @kind, @channel, @status, @subject, @body, @notes, @created_at_ms, @updated_at_ms, @approved_at_ms, @approved_by_operator_id, @approved_by_name)
   ON CONFLICT(outbox_id) DO UPDATE SET
     job_id = excluded.job_id,
     invoice_id = excluded.invoice_id,
@@ -118,7 +118,23 @@ const upsertOutboxRow = db.prepare(`
     notes = excluded.notes,
     created_at_ms = excluded.created_at_ms,
     updated_at_ms = excluded.updated_at_ms,
-    approved_at_ms = excluded.approved_at_ms
+    approved_at_ms = excluded.approved_at_ms,
+    approved_by_operator_id = excluded.approved_by_operator_id,
+    approved_by_name = excluded.approved_by_name
+`)
+
+const findBusinessByIdRow = db.prepare(`SELECT business_id, name, mode, created_at_ms FROM businesses WHERE business_id = ?`)
+const insertBusinessRow = db.prepare(`
+  INSERT INTO businesses (business_id, name, mode, created_at_ms)
+  VALUES (@business_id, @name, @mode, @created_at_ms)
+`)
+const findOperatorByEmailRow = db.prepare(`
+  SELECT operator_id, business_id, email, name, password_hash, status, created_at_ms, last_login_at_ms
+  FROM operators WHERE email = ?
+`)
+const insertOperatorRow = db.prepare(`
+  INSERT INTO operators (operator_id, business_id, email, name, password_hash, status, created_at_ms, last_login_at_ms)
+  VALUES (@operator_id, @business_id, @email, @name, @password_hash, @status, @created_at_ms, @last_login_at_ms)
 `)
 
 export function loadAllOverlays() {
@@ -206,6 +222,8 @@ export function loadAllOverlays() {
       createdAt: row.created_at_ms,
       updatedAt: row.updated_at_ms,
       approvedAt: row.approved_at_ms ?? null,
+      approvedByOperatorId: row.approved_by_operator_id ?? null,
+      approvedByName: row.approved_by_name ?? null,
     })
   }
 
@@ -297,5 +315,48 @@ export function saveOutboxItem(item) {
     created_at_ms: item.createdAt,
     updated_at_ms: item.updatedAt,
     approved_at_ms: item.approvedAt ?? null,
+    approved_by_operator_id: item.approvedByOperatorId ?? null,
+    approved_by_name: item.approvedByName ?? null,
+  })
+}
+
+export function findBusinessById(businessId) {
+  return findBusinessByIdRow.get(businessId) ?? null
+}
+
+export function createBusiness(business) {
+  insertBusinessRow.run({
+    business_id: business.businessId,
+    name: business.name,
+    mode: business.mode,
+    created_at_ms: business.createdAt,
+  })
+}
+
+export function findOperatorByEmail(email) {
+  const row = findOperatorByEmailRow.get(email)
+  if (!row) return null
+  return {
+    operatorId: row.operator_id,
+    businessId: row.business_id,
+    email: row.email,
+    name: row.name,
+    passwordHash: row.password_hash,
+    status: row.status,
+    createdAt: row.created_at_ms,
+    lastLoginAt: row.last_login_at_ms ?? null,
+  }
+}
+
+export function createOperator(operator) {
+  insertOperatorRow.run({
+    operator_id: operator.operatorId,
+    business_id: operator.businessId,
+    email: operator.email,
+    name: operator.name,
+    password_hash: operator.passwordHash,
+    status: operator.status,
+    created_at_ms: operator.createdAt,
+    last_login_at_ms: operator.lastLoginAt ?? null,
   })
 }

@@ -1,8 +1,13 @@
 import Fastify from 'fastify'
+import crypto from 'node:crypto'
 import { ACTION_ITEMS, CUSTOMERS, INBOX, JOBS, QUOTES } from '../src/data/seed/index.ts'
 import { dbPath } from './lib/db.js'
 import {
+  createBusiness,
+  createOperator,
   deleteActionItemOverlay,
+  findBusinessById,
+  findOperatorByEmail,
   loadAllOverlays,
   saveActionItemOverlay,
   saveConversationMessage,
@@ -19,9 +24,47 @@ import {
   isAllowedOutboxKind,
   isAllowedOutboxStatus,
 } from './lib/outbox.js'
+import {
+  createSession,
+  destroySession,
+  getCurrentOperator,
+  getOperatorByEmail,
+  hashPassword,
+  requireOperator,
+  verifyPassword,
+} from './lib/auth.js'
 
 const app = Fastify({ logger: false })
 const port = Number(process.env.PORT || 3001)
+const DEMO_BUSINESS_ID = 'biz-demo'
+const DEMO_OPERATOR_EMAIL = process.env.RYANOS_OPERATOR_EMAIL || 'ryan@example.local'
+const DEMO_OPERATOR_NAME = process.env.RYANOS_OPERATOR_NAME || 'Ryan'
+const DEMO_OPERATOR_PASSWORD = process.env.RYANOS_OPERATOR_PASSWORD || 'ryanos-demo'
+
+async function ensureDemoAuthSeed() {
+  if (!findBusinessById(DEMO_BUSINESS_ID)) {
+    createBusiness({
+      businessId: DEMO_BUSINESS_ID,
+      name: 'RyanOS Demo Business',
+      mode: 'demo',
+      createdAt: Date.now(),
+    })
+  }
+  if (!findOperatorByEmail(DEMO_OPERATOR_EMAIL)) {
+    const passwordHash = await hashPassword(DEMO_OPERATOR_PASSWORD)
+    createOperator({
+      operatorId: `op-${crypto.randomUUID()}`,
+      businessId: DEMO_BUSINESS_ID,
+      email: DEMO_OPERATOR_EMAIL,
+      name: DEMO_OPERATOR_NAME,
+      passwordHash,
+      status: 'active',
+      createdAt: Date.now(),
+      lastLoginAt: null,
+    })
+    console.log(`[ryanos-demo-auth] created demo operator ${DEMO_OPERATOR_EMAIL} / ${DEMO_OPERATOR_PASSWORD} (demo-only)`)
+  }
+}
 
 // Phase 2: in-memory action item overlay.
 // Keyed by ActionItem.id. Status is "completed" or "snoozed".
@@ -386,7 +429,44 @@ function isInvoiceTransitionAllowed(from, to) {
   return allowed.has(to)
 }
 
+function operatorResponse(operator) {
+  if (!operator) return null
+  return {
+    operatorId: operator.operatorId,
+    businessId: operator.businessId,
+    email: operator.email,
+    name: operator.name,
+  }
+}
+
 app.get('/api/v1/health', async () => ({ ok: true }))
+
+app.get('/api/v1/me', async (req) => {
+  const operator = getCurrentOperator(req)
+  return { ok: true, operator: operatorResponse(operator) }
+})
+
+app.post('/api/v1/login', async (req, reply) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const operator = email ? getOperatorByEmail(email) : null
+  if (!operator || operator.status !== 'active') {
+    reply.code(401)
+    return { ok: false, error: 'invalid_credentials' }
+  }
+  const ok = await verifyPassword(password, operator.passwordHash)
+  if (!ok) {
+    reply.code(401)
+    return { ok: false, error: 'invalid_credentials' }
+  }
+  await createSession(reply, operator)
+  return { ok: true, operator: operatorResponse(operator) }
+})
+
+app.post('/api/v1/logout', async (req, reply) => {
+  destroySession(req, reply)
+  return { ok: true }
+})
 
 app.get('/api/v1/action-items', async () => applyOverlay(ACTION_ITEMS))
 
@@ -407,7 +487,9 @@ app.get('/api/v1/jobs', async () => {
 
 app.get('/api/v1/quotes', async () => applyQuoteStatusOverlay(QUOTES))
 
-app.post('/api/v1/action-items/:id/complete', async (req) => {
+app.post('/api/v1/action-items/:id/complete', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const known = ACTION_ITEMS.some(it => it.id === id)
   overlay.set(id, { status: 'completed' })
@@ -416,6 +498,8 @@ app.post('/api/v1/action-items/:id/complete', async (req) => {
 })
 
 app.post('/api/v1/action-items/:id/snooze', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const minutes = parseSnoozeMinutes(req.body)
   if (minutes === null) {
@@ -434,6 +518,8 @@ app.post('/api/v1/action-items/:id/snooze', async (req, reply) => {
 })
 
 app.post('/api/v1/conversations/:id/messages', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const parsed = parseMessageBody(req.body)
   if (parsed === null) {
@@ -462,6 +548,8 @@ app.post('/api/v1/conversations/:id/messages', async (req, reply) => {
 })
 
 app.post('/api/v1/jobs/:id/status', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const status = parseStatusBody(req.body)
   if (status === null) {
@@ -496,6 +584,8 @@ app.post('/api/v1/jobs/:id/status', async (req, reply) => {
 })
 
 app.post('/api/v1/quotes/:id/convert-to-job', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const parsed = parseConvertBody(req.body)
   if (parsed === null) {
@@ -554,6 +644,8 @@ app.get('/api/v1/jobs/:id/outbox', async (req) => {
 })
 
 app.post('/api/v1/jobs/:id/outbox', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const job = findJobById(id)
   if (!job) {
@@ -583,6 +675,8 @@ app.post('/api/v1/jobs/:id/outbox', async (req, reply) => {
 })
 
 app.post('/api/v1/outbox/:id/ready', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const item = getOutboxItemById(id)
   if (!item) {
@@ -605,6 +699,8 @@ app.post('/api/v1/outbox/:id/ready', async (req, reply) => {
     status: 'ready',
     updatedAt: now,
     approvedAt: now,
+    approvedByOperatorId: operator.operatorId,
+    approvedByName: operator.name,
   }
   outboxItems.set(id, updated)
   saveOutboxItem(updated)
@@ -612,6 +708,8 @@ app.post('/api/v1/outbox/:id/ready', async (req, reply) => {
 })
 
 app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
   const { id } = req.params
   const status = parseInvoiceStatusBody(req.body)
   if (status === null) {
@@ -682,6 +780,8 @@ app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
   }
   return { ok: true, id, invoice, draft: draft ?? null, from, to: status, noop: false }
 })
+
+await ensureDemoAuthSeed()
 
 app.listen({ port, host: '0.0.0.0' })
   .then(() => console.log(`server listening on ${port} (db: ${dbPath})`))

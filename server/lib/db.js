@@ -10,6 +10,11 @@ fs.mkdirSync(path.dirname(dbPath), { recursive: true })
 const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
 
+function hasColumn(table, column) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all()
+  return rows.some(row => row.name === column)
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS action_item_overlay (
     action_item_id TEXT PRIMARY KEY,
@@ -85,6 +90,39 @@ db.exec(`
     approved_at_ms INTEGER NULL,
     UNIQUE(job_id, kind, channel)
   );
+
+  CREATE TABLE IF NOT EXISTS businesses (
+    business_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS operators (
+    operator_id TEXT PRIMARY KEY,
+    business_id TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    last_login_at_ms INTEGER NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    session_id TEXT PRIMARY KEY,
+    operator_id TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    expires_at_ms INTEGER NOT NULL,
+    last_seen_at_ms INTEGER NOT NULL
+  );
 `)
+
+if (!hasColumn('outbox_items', 'approved_by_operator_id')) {
+  db.exec(`ALTER TABLE outbox_items ADD COLUMN approved_by_operator_id TEXT NULL`)
+}
+if (!hasColumn('outbox_items', 'approved_by_name')) {
+  db.exec(`ALTER TABLE outbox_items ADD COLUMN approved_by_name TEXT NULL`)
+}
 
 export { db, dbPath }

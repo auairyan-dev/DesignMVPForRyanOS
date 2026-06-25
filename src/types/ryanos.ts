@@ -133,6 +133,20 @@ export interface OutboxItem {
   createdAt: number;
   updatedAt: number;
   approvedAt: number | null;
+  approvedByOperatorId?: string | null;
+  approvedByName?: string | null;
+}
+
+export interface Operator {
+  operatorId: string;
+  businessId: string;
+  email: string;
+  name: string;
+}
+
+export interface AuthMeResponse {
+  ok: true;
+  operator: Operator | null;
 }
 
 export type RevenueChartDatum = { day: string; revenue: number; color: string };

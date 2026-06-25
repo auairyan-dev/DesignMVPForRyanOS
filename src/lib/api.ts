@@ -1,9 +1,9 @@
 import { ACTION_ITEMS, CALLS, CUSTOMERS, INBOX, JOBS, QUOTES } from "@/data/seed";
-import type { ActionItem, Call, Conversation, Customer, Job, OutboxItem, Quote } from "@/types/ryanos";
+import type { ActionItem, AuthMeResponse, Call, Conversation, Customer, Job, Operator, OutboxItem, Quote } from "@/types/ryanos";
 
 async function fetchJson<T>(url: string, fallback: T): Promise<T> {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { credentials: "include" });
     if (!res.ok) return fallback;
     return await res.json() as T;
   } catch {
@@ -21,13 +21,11 @@ export function getConversation(id: string): Promise<Conversation | undefined> {
 export function getJob(id: string): Promise<Job | undefined> { return Promise.resolve(JOBS.find(x => x.id === id)); }
 export function getQuote(id: string): Promise<Quote | undefined> { return Promise.resolve(QUOTES.find(x => x.id === id)); }
 
-// Phase 2: action item mutations. Best-effort — UI keeps optimistic local
-// state, so a failed call should not break the user experience. We swallow
-// errors deliberately and surface only via the boolean return value.
 async function postJson(url: string, body?: unknown): Promise<boolean> {
   try {
     const res = await fetch(url, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -63,7 +61,7 @@ export function updateJobInvoiceStatus(id: string, status: "draft" | "sent" | "p
 
 export async function getJobInvoiceDraft(jobId: string): Promise<any | null> {
   try {
-    const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/invoice-draft`);
+    const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/invoice-draft`, { credentials: "include" });
     if (!res.ok) return null;
     const body = await res.json() as { ok?: boolean; draft?: any | null };
     return body.draft ?? null;
@@ -76,6 +74,7 @@ export async function createJobOutboxItem(jobId: string, opts: { kind: "invoice"
   try {
     const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/outbox`, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(opts),
     });
@@ -89,7 +88,7 @@ export async function createJobOutboxItem(jobId: string, opts: { kind: "invoice"
 
 export async function listJobOutboxItems(jobId: string): Promise<OutboxItem[]> {
   try {
-    const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/outbox`);
+    const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/outbox`, { credentials: "include" });
     if (!res.ok) return [];
     const body = await res.json() as { items?: OutboxItem[] };
     return body.items ?? [];
@@ -102,10 +101,50 @@ export async function markOutboxItemReady(outboxId: string): Promise<OutboxItem 
   try {
     const res = await fetch(`/api/v1/outbox/${encodeURIComponent(outboxId)}/ready`, {
       method: "POST",
+      credentials: "include",
     });
     if (!res.ok) return null;
     const body = await res.json() as { item?: OutboxItem | null };
     return body.item ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function login(email: string, password: string): Promise<Operator | null> {
+  try {
+    const res = await fetch('/api/v1/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) return null;
+    const body = await res.json() as { operator?: Operator | null };
+    return body.operator ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/v1/logout', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function getMe(): Promise<Operator | null> {
+  try {
+    const res = await fetch('/api/v1/me', { credentials: 'include' });
+    if (!res.ok) return null;
+    const body = await res.json() as AuthMeResponse;
+    return body.operator;
   } catch {
     return null;
   }
