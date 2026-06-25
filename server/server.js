@@ -1,5 +1,16 @@
 import Fastify from 'fastify'
 import { ACTION_ITEMS, CUSTOMERS, INBOX, JOBS, QUOTES } from '../src/data/seed/index.ts'
+import { dbPath } from './lib/db.js'
+import {
+  deleteActionItemOverlay,
+  loadAllOverlays,
+  saveActionItemOverlay,
+  saveConversationMessage,
+  saveConvertedJob,
+  saveInvoice,
+  saveJobStatus,
+  saveQuoteStatus,
+} from './lib/overlay-store.js'
 
 const app = Fastify({ logger: false })
 const port = Number(process.env.PORT || 3001)
@@ -10,6 +21,8 @@ const port = Number(process.env.PORT || 3001)
 // Restarting the process clears the overlay (intentional for v1; documented).
 /** @type {Map<string, { status: 'completed' | 'snoozed', until?: number }>} */
 const overlay = new Map()
+const persisted = loadAllOverlays()
+for (const [key, value] of persisted.actionItems) overlay.set(key, value)
 
 const SNOOZE_DEFAULT_MIN = 60
 const SNOOZE_MAX_MIN = 1440 // 24h
@@ -24,6 +37,7 @@ function applyOverlay(items) {
       if (typeof entry.until === 'number' && entry.until > now) return false
       // Snooze expired — drop the entry so it stops accumulating.
       overlay.delete(item.id)
+      deleteActionItemOverlay(item.id)
       return true
     }
     return true
@@ -46,8 +60,14 @@ function parseSnoozeMinutes(body) {
 // Restarting the process clears the overlay (intentional for v1; documented).
 // We never mutate the imported INBOX seed objects.
 /** @type {Map<string, Array<{ id: string, from: 'ai' | 'customer' | 'system', text: string, time: string }>>} */
-const conversationOverlay = new Map()
+const conversationOverlay = new Map(persisted.conversations)
 let serverMessageCounter = 0
+for (const messages of conversationOverlay.values()) {
+  for (const message of messages) {
+    const match = /^srv-\d+-(\d+)$/.exec(message.id)
+    if (match) serverMessageCounter = Math.max(serverMessageCounter, Number(match[1]))
+  }
+}
 
 const MESSAGE_MAX_LEN = 4000
 
@@ -83,7 +103,7 @@ function nextServerMessageId() {
 // Keyed by Job.id; value is the new status string. Restarting the process
 // clears the overlay. We never mutate the imported JOBS seed objects.
 /** @type {Map<string, string>} */
-const jobStatusOverlay = new Map()
+const jobStatusOverlay = new Map(persisted.jobStatuses)
 
 // Allowed status transitions for jobs. Pinned in this file as the protocol
 // source of truth. Cancelled and Ready to invoice are terminal in this phase.
@@ -139,9 +159,9 @@ function isTransitionAllowed(from, to) {
 // Restarting the process clears both. We never mutate the imported JOBS,
 // QUOTES, or CUSTOMERS seed objects.
 /** @type {Map<string, object>} */
-const convertedJobs = new Map()
+const convertedJobs = new Map(persisted.convertedJobs)
 /** @type {Map<string, string>} */
-const quoteStatusOverlay = new Map()
+const quoteStatusOverlay = new Map(persisted.quoteStatuses)
 
 const CONVERTIBLE_QUOTE_STATUSES = new Set(['Accepted', 'Sent', 'Follow-up due'])
 const CONVERT_FIELD_MAX_LEN = 64
@@ -210,7 +230,7 @@ function overlaidConvertedJob(quoteId) {
 // internal bookkeeping state machine only — no real invoice generation,
 // delivery, payment collection, SMS, or email happens in this phase.
 /** @type {Map<string, { jobId: string, invoiceId: string, status: 'draft' | 'sent' | 'paid' | 'overdue', amount: [number, number], note: string, createdAt: number, sentAt?: number, paidAt?: number }>} */
-const invoiceOverlay = new Map()
+const invoiceOverlay = new Map(persisted.invoices)
 
 const KNOWN_INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'overdue'])
 const ALLOWED_INVOICE_TRANSITIONS = new Map([
@@ -326,6 +346,7 @@ app.post('/api/v1/action-items/:id/complete', async (req) => {
   const { id } = req.params
   const known = ACTION_ITEMS.some(it => it.id === id)
   overlay.set(id, { status: 'completed' })
+  saveActionItemOverlay(id, { status: 'completed' })
   return { ok: true, id, status: 'completed', noop: !known }
 })
 
@@ -343,6 +364,7 @@ app.post('/api/v1/action-items/:id/snooze', async (req, reply) => {
   const known = ACTION_ITEMS.some(it => it.id === id)
   const until = Date.now() + Math.round(minutes * 60_000)
   overlay.set(id, { status: 'snoozed', until })
+  saveActionItemOverlay(id, { status: 'snoozed', until })
   return { ok: true, id, status: 'snoozed', until, minutes, noop: !known }
 })
 
@@ -370,6 +392,7 @@ app.post('/api/v1/conversations/:id/messages', async (req, reply) => {
   const existing = conversationOverlay.get(id)
   if (existing) existing.push(message)
   else conversationOverlay.set(id, [message])
+  saveConversationMessage(id, message)
   return { ok: true, conversationId: id, message, noop: false }
 })
 
@@ -403,6 +426,7 @@ app.post('/api/v1/jobs/:id/status', async (req, reply) => {
     }
   }
   jobStatusOverlay.set(id, status)
+  saveJobStatus(id, status)
   return { ok: true, id, from, to: status, job: { ...job, status }, noop: false }
 })
 
@@ -439,6 +463,8 @@ app.post('/api/v1/quotes/:id/convert-to-job', async (req, reply) => {
   const job = buildJobFromQuote(quote, parsed)
   convertedJobs.set(id, job)
   quoteStatusOverlay.set(id, 'Accepted')
+  saveConvertedJob(id, job)
+  saveQuoteStatus(id, 'Accepted')
   const overlaidQuote = applyQuoteStatusOverlay([quote])[0]
   return { ok: true, quoteId: id, quote: overlaidQuote, job, idempotent: false, noop: false }
 })
@@ -498,11 +524,12 @@ app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
   }
   invoice.note = buildInvoiceNote(job, invoice)
   invoiceOverlay.set(id, invoice)
+  saveInvoice(invoice)
   return { ok: true, id, invoice, from, to: status, noop: false }
 })
 
 app.listen({ port, host: '0.0.0.0' })
-  .then(() => console.log(`server listening on ${port}`))
+  .then(() => console.log(`server listening on ${port} (db: ${dbPath})`))
   .catch(err => {
     console.error(err)
     process.exit(1)
