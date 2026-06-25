@@ -12,8 +12,9 @@ export function useActionItems() {
 
 export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>(INBOX);
-  useEffect(() => { void listConversations().then(setConversations); }, []);
-  return { conversations, setConversations };
+  const refresh = () => { void listConversations().then(setConversations); };
+  useEffect(() => { refresh(); }, []);
+  return { conversations, setConversations, refresh };
 }
 
 

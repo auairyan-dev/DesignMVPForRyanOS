@@ -44,3 +44,7 @@ export function completeActionItem(id: string): Promise<boolean> {
 export function snoozeActionItem(id: string, minutes: number = 60): Promise<boolean> {
   return postJson(`/api/v1/action-items/${encodeURIComponent(id)}/snooze`, { minutes });
 }
+
+export function sendConversationMessage(id: string, text: string): Promise<boolean> {
+  return postJson(`/api/v1/conversations/${encodeURIComponent(id)}/messages`, { text });
+}

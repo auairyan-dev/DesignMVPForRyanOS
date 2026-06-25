@@ -20,7 +20,7 @@ import {
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, snoozeActionItem } from "@/lib/api";
+import { completeActionItem, snoozeActionItem, sendConversationMessage } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -3082,7 +3082,7 @@ function GoLiveScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ─── INBOX SCREEN ────────────────────────────────────────────────────────────
 
 function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { onNavigate: (s: Screen, id?: string) => void; onSelect: (id: string) => void; initialFilter?: string; initialConvId?: string }) {
-  const { conversations } = useConversations();
+  const { conversations, refresh: refreshConversations } = useConversations();
   const [activeId, setActiveId] = useState(() => {
     if (initialConvId && INBOX.find(c => c.id === initialConvId)) return initialConvId;
     return INBOX[0].id;
@@ -3139,20 +3139,36 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   ].sort((a, b) => a.id.localeCompare(b.id));
 
   const sendReply = () => {
-    if (!replyText.trim()) return;
+    const trimmed = replyText.trim();
+    if (!trimmed) return;
+    const localId = `sent-${Date.now()}`;
     const msg: InboxMsg = {
-      id: `sent-${Date.now()}`,
+      id: localId,
       from: "customer",
-      text: replyText.trim(),
+      text: trimmed,
       time: "Just now",
     };
-    setSentReplies(prev => ({ ...prev, [conv.id]: [...(prev[conv.id] ?? []), msg] }));
+    const convId = conv.id;
+    setSentReplies(prev => ({ ...prev, [convId]: [...(prev[convId] ?? []), msg] }));
     setReplyText("");
     setTimeout(() => {
       if (scrollRef.current) {
         scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
       }
     }, 50);
+    void sendConversationMessage(convId, trimmed).then(ok => {
+      if (!ok) return;
+      // Server is now the source of truth for this message. Drop the local
+      // optimistic copy so we don't render duplicate bubbles after refresh.
+      setSentReplies(prev => {
+        const list = prev[convId];
+        if (!list) return prev;
+        const next = list.filter(m => m.id !== localId);
+        if (next.length === list.length) return prev;
+        return { ...prev, [convId]: next };
+      });
+      refreshConversations();
+    });
   };
 
   const chanLabel: Record<string, string> = {
