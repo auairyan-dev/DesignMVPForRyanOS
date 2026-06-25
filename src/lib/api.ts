@@ -150,13 +150,13 @@ export async function getMe(): Promise<Operator | null> {
   }
 }
 
-export async function attemptSendOutboxItem(outboxId: string, opts?: { transport?: "mock" }): Promise<SendAttempt | null> {
+export async function attemptSendOutboxItem(outboxId: string, opts?: { transport?: "mock" | "twilio-test"; target?: string }): Promise<SendAttempt | null> {
   try {
     const res = await fetch(`/api/v1/outbox/${encodeURIComponent(outboxId)}/attempt-send`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transport: opts?.transport ?? 'mock' }),
+      body: JSON.stringify({ transport: opts?.transport ?? 'mock', target: opts?.target }),
     });
     if (!res.ok) return null;
     const body = await res.json() as { attempt?: SendAttempt | null };

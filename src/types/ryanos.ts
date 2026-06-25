@@ -158,8 +158,8 @@ export interface SendAttempt {
   customer: string;
   kind: "invoice";
   channel: "email";
-  transport: "mock";
-  status: "dry-run" | "failed";
+  transport: "mock" | "twilio-test";
+  status: "dry-run" | "attempted" | "failed";
   target: string | null;
   subject: string | null;
   body: string;

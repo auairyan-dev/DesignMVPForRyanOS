@@ -3109,6 +3109,7 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   const [invoiceDrafts, setInvoiceDrafts] = useState<Record<string, any | null>>({});
   const [outboxByJob, setOutboxByJob] = useState<Record<string, OutboxItem[]>>({});
   const [attemptsByOutbox, setAttemptsByOutbox] = useState<Record<string, SendAttempt[]>>({});
+  const [twilioTestTargetByOutbox, setTwilioTestTargetByOutbox] = useState<Record<string, string>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
 
@@ -3663,11 +3664,16 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                             <p className="text-blue-300 text-xs font-semibold">Transport attempt</p>
                             {attemptsByOutbox[outboxByJob[conv.linkedJobId][0].outboxId].map((attempt) => (
                               <div key={attempt.attemptId} className="rounded-xl border border-blue-400/10 bg-background/40 p-3 text-xs space-y-1">
-                                <p className="text-foreground"><span className="text-muted-foreground">Status:</span> {attempt.status === "dry-run" ? "Dry-run only" : attempt.status}</p>
-                                <p className="text-foreground"><span className="text-muted-foreground">Transport:</span> {attempt.transport}</p>
+                                <p className="text-foreground"><span className="text-muted-foreground">Status:</span> {attempt.status === "dry-run" ? "Dry-run only" : attempt.status === "attempted" ? "Provider request accepted" : "Failed"}</p>
+                                <p className="text-foreground"><span className="text-muted-foreground">Transport:</span> {attempt.transport === "twilio-test" ? "twilio-test" : attempt.transport}</p>
+                                {attempt.target && <p className="text-foreground"><span className="text-muted-foreground">Test target:</span> {attempt.target}</p>}
                                 <p className="text-foreground"><span className="text-muted-foreground">Requested by:</span> {attempt.requestedByName}</p>
                                 {attempt.approvedByName && <p className="text-foreground"><span className="text-muted-foreground">Approved by:</span> {attempt.approvedByName}</p>}
-                                <p className="text-muted-foreground">No delivery confirmation. {attempt.notes}</p>
+                                {attempt.providerMessageId && <p className="text-foreground"><span className="text-muted-foreground">Provider message ID:</span> {attempt.providerMessageId}</p>}
+                                {attempt.providerStatus && <p className="text-foreground"><span className="text-muted-foreground">Provider status:</span> {attempt.providerStatus}</p>}
+                                {attempt.providerErrorCode && <p className="text-foreground"><span className="text-muted-foreground">Provider error:</span> {attempt.providerErrorCode}</p>}
+                                {attempt.providerErrorMessage && <p className="text-foreground"><span className="text-muted-foreground">Provider detail:</span> {attempt.providerErrorMessage}</p>}
+                                <p className="text-muted-foreground">Delivery not confirmed. {attempt.notes}</p>
                               </div>
                             ))}
                           </div>
@@ -3756,7 +3762,7 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                   </div>
                 )}
                 {conv.linkedJobId && outboxByJob[conv.linkedJobId]?.[0]?.status === "ready" && (
-                  <div className="flex gap-2 flex-wrap">
+                  <div className="flex gap-2 flex-wrap items-end">
                     <Btn size="sm" variant="secondary">Marked ready</Btn>
                     <Btn
                       size="sm"
@@ -3772,6 +3778,38 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                         });
                       }}
                     ><Send size={12} /> Create dry-run attempt</Btn>
+                    <div className="min-w-[260px] rounded-xl border border-blue-400/15 bg-blue-400/5 px-3 py-2">
+                      <p className="text-blue-300 text-xs font-semibold">Twilio test attempt</p>
+                      <p className="text-muted-foreground text-[11px] mt-1">Test numbers only. Delivery not confirmed. No customer send.</p>
+                      <input
+                        className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground outline-none"
+                        placeholder="+614xxxxxxxx"
+                        value={twilioTestTargetByOutbox[outboxByJob[conv.linkedJobId][0].outboxId] ?? ""}
+                        onChange={(e) => {
+                          const outboxId = outboxByJob[conv.linkedJobId!]?.[0]?.outboxId;
+                          if (!outboxId) return;
+                          setTwilioTestTargetByOutbox(prev => ({ ...prev, [outboxId]: e.target.value }));
+                        }}
+                      />
+                      <div className="mt-2">
+                        <Btn
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            const outboxId = outboxByJob[conv.linkedJobId!]?.[0]?.outboxId;
+                            if (!outboxId) return;
+                            const target = (twilioTestTargetByOutbox[outboxId] ?? "").trim();
+                            if (!target) return;
+                            void attemptSendOutboxItem(outboxId, { transport: "twilio-test", target }).then((attempt) => {
+                              if (!attempt) return;
+                              void listOutboxSendAttempts(outboxId).then((attempts) => {
+                                setAttemptsByOutbox(prev => ({ ...prev, [outboxId]: attempts }));
+                              });
+                            });
+                          }}
+                        ><Send size={12} /> Create Twilio test attempt</Btn>
+                      </div>
+                    </div>
                   </div>
                 )}
                 {conv.journey.paymentStatus === "invoice-sent" && (

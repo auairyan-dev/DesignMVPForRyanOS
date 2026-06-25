@@ -27,7 +27,9 @@ import {
 } from './lib/outbox.js'
 import {
   executeTransportAttempt,
+  getTwilioConfig,
   isAllowedTransport,
+  normalizeTarget,
 } from './lib/transport.js'
 import {
   createSession,
@@ -291,7 +293,7 @@ const invoiceOverlay = new Map(persisted.invoices)
 const invoiceDrafts = new Map(persisted.invoiceDrafts)
 /** @type {Map<string, { outboxId: string, jobId: string, invoiceId: string | null, customerId: string | null, customer: string, kind: 'invoice', channel: 'email', status: 'draft' | 'ready', subject: string | null, body: string, notes: string, createdAt: number, updatedAt: number, approvedAt: number | null }>} */
 const outboxItems = new Map(persisted.outboxItems)
-/** @type {Map<string, { attemptId: string, outboxId: string, jobId: string, invoiceId: string | null, customerId: string | null, customer: string, kind: 'invoice', channel: 'email', transport: 'mock', status: 'dry-run' | 'failed', target: string | null, subject: string | null, body: string, notes: string, requestedByOperatorId: string, requestedByName: string, approvedByOperatorId: string | null, approvedByName: string | null, approvedAt: number | null, createdAt: number, updatedAt: number, attemptedAt: number | null, failedAt: number | null, providerMessageId: string | null, providerStatus: string | null, providerErrorCode: string | null, providerErrorMessage: string | null, dryRun: boolean }>} */
+/** @type {Map<string, { attemptId: string, outboxId: string, jobId: string, invoiceId: string | null, customerId: string | null, customer: string, kind: 'invoice', channel: 'email', transport: 'mock' | 'twilio-test', status: 'dry-run' | 'attempted' | 'failed', target: string | null, subject: string | null, body: string, notes: string, requestedByOperatorId: string, requestedByName: string, approvedByOperatorId: string | null, approvedByName: string | null, approvedAt: number | null, createdAt: number, updatedAt: number, attemptedAt: number | null, failedAt: number | null, providerMessageId: string | null, providerStatus: string | null, providerErrorCode: string | null, providerErrorMessage: string | null, dryRun: boolean }>} */
 const sendAttempts = new Map(persisted.sendAttempts)
 
 const KNOWN_INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'overdue'])
@@ -747,7 +749,7 @@ app.post('/api/v1/outbox/:id/attempt-send', async (req, reply) => {
     return {
       ok: false,
       error: 'invalid_transport',
-      message: 'transport must be "mock" in Phase 11',
+      message: 'transport must be "mock" or "twilio-test" in Phase 12',
     }
   }
   if (item.status !== 'ready' || !item.approvedAt || !item.approvedByOperatorId || !item.approvedByName) {
@@ -758,6 +760,52 @@ app.post('/api/v1/outbox/:id/attempt-send', async (req, reply) => {
       message: 'outbox item must be marked ready before a send attempt can be created',
     }
   }
+
+  const requestedTarget = normalizeTarget(req.body?.target)
+  if (transport === 'twilio-test') {
+    const twilioConfig = getTwilioConfig()
+    if (process.env.RYANOS_ENABLE_TWILIO_TRANSPORT !== 'true') {
+      reply.code(400)
+      return {
+        ok: false,
+        error: 'twilio_transport_disabled',
+        message: 'Twilio test transport is disabled.',
+      }
+    }
+    if (!twilioConfig.accountSid || !twilioConfig.authToken || !twilioConfig.fromNumber) {
+      reply.code(400)
+      return {
+        ok: false,
+        error: 'twilio_not_configured',
+        message: 'Twilio credentials are not fully configured.',
+      }
+    }
+    if (twilioConfig.allowlist.length === 0) {
+      reply.code(400)
+      return {
+        ok: false,
+        error: 'twilio_allowlist_empty',
+        message: 'Twilio test target allowlist is empty.',
+      }
+    }
+    if (!requestedTarget) {
+      reply.code(400)
+      return {
+        ok: false,
+        error: 'invalid_target',
+        message: 'target must be an allowlisted E.164 test number',
+      }
+    }
+    if (!twilioConfig.allowlist.includes(requestedTarget)) {
+      reply.code(400)
+      return {
+        ok: false,
+        error: 'target_not_allowlisted',
+        message: 'target must match an allowlisted Twilio test number',
+      }
+    }
+  }
+
   const now = Date.now()
   const draftAttempt = {
     attemptId: `att-${crypto.randomUUID()}`,
@@ -768,12 +816,14 @@ app.post('/api/v1/outbox/:id/attempt-send', async (req, reply) => {
     customer: item.customer,
     kind: item.kind,
     channel: item.channel,
-    transport: 'mock',
-    status: 'dry-run',
-    target: null,
+    transport,
+    status: transport === 'mock' ? 'dry-run' : 'attempted',
+    target: transport === 'twilio-test' ? requestedTarget : null,
     subject: item.subject ?? null,
     body: item.body,
-    notes: 'Dry-run only. Not delivered by RyanOS.',
+    notes: transport === 'mock'
+      ? 'Dry-run only. Not delivered by RyanOS.'
+      : 'Twilio test attempt. Test target only. No customer send. Delivery not confirmed.',
     requestedByOperatorId: operator.operatorId,
     requestedByName: operator.name,
     approvedByOperatorId: item.approvedByOperatorId ?? null,
@@ -787,9 +837,9 @@ app.post('/api/v1/outbox/:id/attempt-send', async (req, reply) => {
     providerStatus: null,
     providerErrorCode: null,
     providerErrorMessage: null,
-    dryRun: true,
+    dryRun: transport === 'mock',
   }
-  const result = executeTransportAttempt(draftAttempt)
+  const result = await executeTransportAttempt(draftAttempt)
   const attempt = {
     ...draftAttempt,
     status: result.status,
@@ -882,11 +932,17 @@ app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {
   return { ok: true, id, invoice, draft: draft ?? null, from, to: status, noop: false }
 })
 
-await ensureDemoAuthSeed()
+export default async function startServer(options = {}) {
+  await ensureDemoAuthSeed()
+  await app.listen({ port: options.port ?? port, host: options.host ?? '0.0.0.0' })
+  return app
+}
 
-app.listen({ port, host: '0.0.0.0' })
-  .then(() => console.log(`server listening on ${port} (db: ${dbPath})`))
-  .catch(err => {
-    console.error(err)
-    process.exit(1)
-  })
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startServer()
+    .then(() => console.log(`server listening on ${port} (db: ${dbPath})`))
+    .catch(err => {
+      console.error(err)
+      process.exit(1)
+    })
+}
