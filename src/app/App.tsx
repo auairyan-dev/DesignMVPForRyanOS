@@ -507,7 +507,7 @@ function DashboardScreen({ onNavigate, onSelect, techSubmissions = [] }: {
             {pendingItems.map(item => {
               const pc = PRIORITY[item.priority as PriorityKey] || PRIORITY["missed-call"];
               const desktopLinkedCustomer = CUSTOMERS.find(c => c.name === item.customer);
-              const desktopLinkedJob = desktopLinkedCustomer ? JOBS.find(j => j.customerId === desktopLinkedCustomer.id) : null;
+              const desktopLinkedJob = desktopLinkedCustomer ? jobs.find(j => j.customerId === desktopLinkedCustomer.id) ?? JOBS.find(j => j.customerId === desktopLinkedCustomer.id) : null;
               return (
                 <div
                   key={item.id}
@@ -4776,7 +4776,7 @@ function MobileApp() {
                 <button
                   className="w-full py-4 rounded-2xl bg-blue-500 flex items-center justify-center gap-3 active:bg-blue-400 transition-colors"
                   onClick={() => {
-                    const linkedQuote = QUOTES.find(q => q.customerId === job.customerId);
+                    const linkedQuote = quotes.find(q => q.customerId === job.customerId) ?? QUOTES.find(q => q.customerId === job.customerId);
                     if (linkedQuote) { setSelectedQuoteId(linkedQuote.id); setScreen("quote-edit"); }
                     else { setTab("quotes"); setScreen("quotes"); }
                   }}
@@ -5072,7 +5072,7 @@ function MobileApp() {
   /* ── QUOTE EDIT ── */
   if (screen === "quote-edit" && quote) {
     // Find linked job by customerId
-    const linkedJob = JOBS.find(j => j.customerId === quote.customerId);
+    const linkedJob = jobs.find(j => j.customerId === quote.customerId) ?? JOBS.find(j => j.customerId === quote.customerId);
     const techNotes = linkedJob ? (jobNotes[linkedJob.id] || "") : "";
     const siteMaterials = linkedJob ? (jobMaterials[linkedJob.id] || []) : [];
     const sitePhotoCount = linkedJob ? (jobPhotos[linkedJob.id] || 0) : 0;
@@ -5400,7 +5400,7 @@ function MobileApp() {
                   const isExpanded = mobileExpandedCard === item.id;
                   // Find linked job for this action item
                   const itemCustomer = CUSTOMERS.find(c => c.name === item.customer);
-                  const linkedActionJob = itemCustomer ? JOBS.find(j => j.customerId === itemCustomer.id) : null;
+                  const linkedActionJob = itemCustomer ? jobs.find(j => j.customerId === itemCustomer.id) ?? JOBS.find(j => j.customerId === itemCustomer.id) : null;
 
                   const ALL_OPTIONS: Array<{ icon: React.ElementType; label: string; muted?: boolean; onTap: () => void }> = [
                     { icon: Check,         label: "Mark as done",     muted: true, onTap: () => { setActionStates(prev => ({ ...prev, [item.id]: "done" })); setMobileExpandedCard(null); } },
@@ -5738,7 +5738,7 @@ function MobileApp() {
               const isSent = quoteSent.has(q.id);
               const isDraft = draftQuotes.has(q.id);
               const isSubmittedForReview = invoicesSubmitted.has(q.id);
-              const linkedJob = JOBS.find(j => j.customerId === q.customerId);
+              const linkedJob = jobs.find(j => j.customerId === q.customerId) ?? JOBS.find(j => j.customerId === q.customerId);
               const hasTechData = linkedJob && (
                 (jobNotes[linkedJob.id] || "").length > 0 ||
                 (jobMaterials[linkedJob.id] || []).length > 0 ||
@@ -6114,7 +6114,7 @@ function TechnicianApp({ onSubmit, onSwitchRole }: {
   const [techReplyInput, setTechReplyInput] = useState("");
 
   const myJobs = JOBS.filter(j => ["Today", "Tomorrow", "Friday"].includes(j.date));
-  const job = JOBS.find(j => j.id === selectedJobId);
+  const job = jobs.find(j => j.id === selectedJobId) ?? JOBS.find(j => j.id === selectedJobId);
   const status = selectedJobId ? (jobStatuses[selectedJobId] || "assigned") : "assigned";
   const notes = selectedJobId ? (techNotes[selectedJobId] || { work: "", internal: "", extra: "", flagged: false }) : { work: "", internal: "", extra: "", flagged: false };
   const materials = selectedJobId ? (techMaterials[selectedJobId] || []) : [];
