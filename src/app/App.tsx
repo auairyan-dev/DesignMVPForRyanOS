@@ -17,10 +17,10 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
+import type { ActionItem, Call, Conversation, Customer, Job, NavItem, OutboxItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, convertQuoteToJob, getJobInvoiceDraft, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
+import { completeActionItem, convertQuoteToJob, createJobOutboxItem, getJobInvoiceDraft, listJobOutboxItems, markOutboxItemReady, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -3107,6 +3107,7 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   const [sentReplies, setSentReplies] = useState<Record<string, InboxMsg[]>>({});
   const [msgPreview, setMsgPreview] = useState<{ recipient: string; channel: "sms" | "email"; message: string } | null>(null);
   const [invoiceDrafts, setInvoiceDrafts] = useState<Record<string, any | null>>({});
+  const [outboxByJob, setOutboxByJob] = useState<Record<string, OutboxItem[]>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
 
@@ -3117,11 +3118,17 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   useEffect(() => {
     const jobId = conv?.linkedJobId;
     if (!jobId) return;
-    if (invoiceDrafts[jobId] !== undefined) return;
-    void getJobInvoiceDraft(jobId).then((draft) => {
-      setInvoiceDrafts(prev => ({ ...prev, [jobId]: draft }));
-    });
-  }, [conv?.linkedJobId, invoiceDrafts]);
+    if (invoiceDrafts[jobId] === undefined) {
+      void getJobInvoiceDraft(jobId).then((draft) => {
+        setInvoiceDrafts(prev => ({ ...prev, [jobId]: draft }));
+      });
+    }
+    if (outboxByJob[jobId] === undefined) {
+      void listJobOutboxItems(jobId).then((items) => {
+        setOutboxByJob(prev => ({ ...prev, [jobId]: items }));
+      });
+    }
+  }, [conv?.linkedJobId, invoiceDrafts, outboxByJob]);
 
   const reviewCount = conversations.filter(c => c.status === "needs-human" || c.status === "urgent").length;
   const urgentCount = conversations.filter(c => c.status === "urgent").length;
@@ -3631,6 +3638,19 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                       </div>
                     </div>
                   )}
+                  {conv.linkedJobId && outboxByJob[conv.linkedJobId]?.[0] && (
+                    <div className="mt-3 bg-blue-400/5 border border-blue-400/15 rounded-xl px-4 py-3">
+                      <p className="text-blue-400 text-xs font-semibold mb-2">Internal outbox draft</p>
+                      <div className="space-y-1 text-sm">
+                        <p className="text-foreground"><span className="text-muted-foreground">Outbox:</span> {outboxByJob[conv.linkedJobId][0].outboxId}</p>
+                        <p className="text-foreground"><span className="text-muted-foreground">Kind / channel:</span> {outboxByJob[conv.linkedJobId][0].kind} / {outboxByJob[conv.linkedJobId][0].channel}</p>
+                        <p className="text-foreground"><span className="text-muted-foreground">Status:</span> {outboxByJob[conv.linkedJobId][0].status === "ready" ? "Marked ready" : outboxByJob[conv.linkedJobId][0].status}</p>
+                        {outboxByJob[conv.linkedJobId][0].subject && <p className="text-foreground"><span className="text-muted-foreground">Subject:</span> {outboxByJob[conv.linkedJobId][0].subject}</p>}
+                        <p className="text-foreground"><span className="text-muted-foreground">Body:</span> {outboxByJob[conv.linkedJobId][0].body}</p>
+                        <p className="text-muted-foreground text-xs pt-1">{outboxByJob[conv.linkedJobId][0].notes}</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Linked records */}
@@ -3682,16 +3702,38 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                         variant="secondary"
                         onClick={() => {
                           if (!conv.linkedJobId) return;
-                          void updateJobInvoiceStatus(conv.linkedJobId, "sent").then((ok) => {
-                            if (!ok) return;
-                            refreshConversations();
-                            void getJobInvoiceDraft(conv.linkedJobId!).then((draft) => {
-                              setInvoiceDrafts(prev => ({ ...prev, [conv.linkedJobId!]: draft }));
+                          void createJobOutboxItem(conv.linkedJobId, { kind: "invoice", channel: "email" }).then((item) => {
+                            if (!item) return;
+                            void listJobOutboxItems(conv.linkedJobId!).then((items) => {
+                              setOutboxByJob(prev => ({ ...prev, [conv.linkedJobId!]: items }));
                             });
                           });
                         }}
-                      ><Check size={12} /> Mark invoice as sent</Btn>
+                      ><Check size={12} /> Prepare message draft</Btn>
                     </div>
+                  </div>
+                )}
+                {conv.linkedJobId && outboxByJob[conv.linkedJobId]?.[0]?.status === "draft" && (
+                  <div className="flex gap-2">
+                    <Btn
+                      size="sm"
+                      variant="primary"
+                      onClick={() => {
+                        const outboxId = outboxByJob[conv.linkedJobId!]?.[0]?.outboxId;
+                        if (!outboxId) return;
+                        void markOutboxItemReady(outboxId).then((item) => {
+                          if (!item) return;
+                          void listJobOutboxItems(conv.linkedJobId!).then((items) => {
+                            setOutboxByJob(prev => ({ ...prev, [conv.linkedJobId!]: items }));
+                          });
+                        });
+                      }}
+                    ><Check size={12} /> Mark ready to send</Btn>
+                  </div>
+                )}
+                {conv.linkedJobId && outboxByJob[conv.linkedJobId]?.[0]?.status === "ready" && (
+                  <div className="flex gap-2">
+                    <Btn size="sm" variant="secondary">Marked ready</Btn>
                   </div>
                 )}
                 {conv.journey.paymentStatus === "invoice-sent" && (

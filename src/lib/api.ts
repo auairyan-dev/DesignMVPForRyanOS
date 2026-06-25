@@ -1,5 +1,5 @@
 import { ACTION_ITEMS, CALLS, CUSTOMERS, INBOX, JOBS, QUOTES } from "@/data/seed";
-import type { ActionItem, Call, Conversation, Customer, Job, Quote } from "@/types/ryanos";
+import type { ActionItem, Call, Conversation, Customer, Job, OutboxItem, Quote } from "@/types/ryanos";
 
 async function fetchJson<T>(url: string, fallback: T): Promise<T> {
   try {
@@ -67,6 +67,45 @@ export async function getJobInvoiceDraft(jobId: string): Promise<any | null> {
     if (!res.ok) return null;
     const body = await res.json() as { ok?: boolean; draft?: any | null };
     return body.draft ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function createJobOutboxItem(jobId: string, opts: { kind: "invoice"; channel: "email" }): Promise<OutboxItem | null> {
+  try {
+    const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/outbox`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    if (!res.ok) return null;
+    const body = await res.json() as { item?: OutboxItem | null };
+    return body.item ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function listJobOutboxItems(jobId: string): Promise<OutboxItem[]> {
+  try {
+    const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/outbox`);
+    if (!res.ok) return [];
+    const body = await res.json() as { items?: OutboxItem[] };
+    return body.items ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function markOutboxItemReady(outboxId: string): Promise<OutboxItem | null> {
+  try {
+    const res = await fetch(`/api/v1/outbox/${encodeURIComponent(outboxId)}/ready`, {
+      method: "POST",
+    });
+    if (!res.ok) return null;
+    const body = await res.json() as { item?: OutboxItem | null };
+    return body.item ?? null;
   } catch {
     return null;
   }

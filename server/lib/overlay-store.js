@@ -98,6 +98,29 @@ const upsertInvoiceDraftRow = db.prepare(`
     updated_at_ms = excluded.updated_at_ms
 `)
 
+const loadOutboxRows = db.prepare(`
+  SELECT outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, status, subject, body, notes, created_at_ms, updated_at_ms, approved_at_ms
+  FROM outbox_items
+`)
+const upsertOutboxRow = db.prepare(`
+  INSERT INTO outbox_items (outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, status, subject, body, notes, created_at_ms, updated_at_ms, approved_at_ms)
+  VALUES (@outbox_id, @job_id, @invoice_id, @customer_id, @customer, @kind, @channel, @status, @subject, @body, @notes, @created_at_ms, @updated_at_ms, @approved_at_ms)
+  ON CONFLICT(outbox_id) DO UPDATE SET
+    job_id = excluded.job_id,
+    invoice_id = excluded.invoice_id,
+    customer_id = excluded.customer_id,
+    customer = excluded.customer,
+    kind = excluded.kind,
+    channel = excluded.channel,
+    status = excluded.status,
+    subject = excluded.subject,
+    body = excluded.body,
+    notes = excluded.notes,
+    created_at_ms = excluded.created_at_ms,
+    updated_at_ms = excluded.updated_at_ms,
+    approved_at_ms = excluded.approved_at_ms
+`)
+
 export function loadAllOverlays() {
   const actionItems = new Map()
   for (const row of loadActionItemRows.all()) {
@@ -166,7 +189,27 @@ export function loadAllOverlays() {
     })
   }
 
-  return { actionItems, conversations, jobStatuses, convertedJobs, quoteStatuses, invoices, invoiceDrafts }
+  const outboxItems = new Map()
+  for (const row of loadOutboxRows.all()) {
+    outboxItems.set(row.outbox_id, {
+      outboxId: row.outbox_id,
+      jobId: row.job_id,
+      invoiceId: row.invoice_id ?? null,
+      customerId: row.customer_id ?? null,
+      customer: row.customer,
+      kind: row.kind,
+      channel: row.channel,
+      status: row.status,
+      subject: row.subject ?? null,
+      body: row.body,
+      notes: row.notes,
+      createdAt: row.created_at_ms,
+      updatedAt: row.updated_at_ms,
+      approvedAt: row.approved_at_ms ?? null,
+    })
+  }
+
+  return { actionItems, conversations, jobStatuses, convertedJobs, quoteStatuses, invoices, invoiceDrafts, outboxItems }
 }
 
 export function saveActionItemOverlay(actionItemId, entry) {
@@ -235,5 +278,24 @@ export function saveInvoiceDraft(draft) {
     notes: draft.notes,
     created_at_ms: draft.createdAt,
     updated_at_ms: draft.updatedAt,
+  })
+}
+
+export function saveOutboxItem(item) {
+  upsertOutboxRow.run({
+    outbox_id: item.outboxId,
+    job_id: item.jobId,
+    invoice_id: item.invoiceId ?? null,
+    customer_id: item.customerId ?? null,
+    customer: item.customer,
+    kind: item.kind,
+    channel: item.channel,
+    status: item.status,
+    subject: item.subject ?? null,
+    body: item.body,
+    notes: item.notes,
+    created_at_ms: item.createdAt,
+    updated_at_ms: item.updatedAt,
+    approved_at_ms: item.approvedAt ?? null,
   })
 }

@@ -67,6 +67,24 @@ db.exec(`
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS outbox_items (
+    outbox_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    invoice_id TEXT NULL,
+    customer_id TEXT NULL,
+    customer TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL,
+    subject TEXT NULL,
+    body TEXT NOT NULL,
+    notes TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    approved_at_ms INTEGER NULL,
+    UNIQUE(job_id, kind, channel)
+  );
 `)
 
 export { db, dbPath }

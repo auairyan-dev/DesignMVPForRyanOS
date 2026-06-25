@@ -10,8 +10,15 @@ import {
   saveInvoice,
   saveInvoiceDraft,
   saveJobStatus,
+  saveOutboxItem,
   saveQuoteStatus,
 } from './lib/overlay-store.js'
+import {
+  buildInvoiceOutboxItem,
+  isAllowedOutboxChannel,
+  isAllowedOutboxKind,
+  isAllowedOutboxStatus,
+} from './lib/outbox.js'
 
 const app = Fastify({ logger: false })
 const port = Number(process.env.PORT || 3001)
@@ -234,6 +241,8 @@ function overlaidConvertedJob(quoteId) {
 const invoiceOverlay = new Map(persisted.invoices)
 /** @type {Map<string, { invoiceId: string, jobId: string, customerId?: string, customer: string, status: 'draft', lineItems: Array<{ id: string, label: string, qty: number, unitPrice: number, total: number }>, subtotal: number, total: number, notes: string, createdAt: number, updatedAt: number }>} */
 const invoiceDrafts = new Map(persisted.invoiceDrafts)
+/** @type {Map<string, { outboxId: string, jobId: string, invoiceId: string | null, customerId: string | null, customer: string, kind: 'invoice', channel: 'email', status: 'draft' | 'ready', subject: string | null, body: string, notes: string, createdAt: number, updatedAt: number, approvedAt: number | null }>} */
+const outboxItems = new Map(persisted.outboxItems)
 
 const KNOWN_INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'overdue'])
 const ALLOWED_INVOICE_TRANSITIONS = new Map([
@@ -351,6 +360,23 @@ function createInvoiceDraftFromJob(job) {
 
 function hasSeedReadyToInvoiceConversation(jobId) {
   return INBOX.some(conv => conv.linkedJobId === jobId && conv.journey?.paymentStatus === 'ready-to-invoice')
+}
+
+function listOutboxItemsByJobId(jobId) {
+  return [...outboxItems.values()].filter(item => item.jobId === jobId)
+}
+
+function getOutboxItemById(outboxId) {
+  return outboxItems.get(outboxId) || null
+}
+
+function createOrGetOutboxItem(job, invoiceDraft, kind, channel) {
+  const existing = listOutboxItemsByJobId(job.id).find(item => item.kind === kind && item.channel === channel)
+  if (existing) return { item: existing, idempotent: true, noop: true }
+  const item = buildInvoiceOutboxItem(job, invoiceDraft)
+  outboxItems.set(item.outboxId, item)
+  saveOutboxItem(item)
+  return { item, idempotent: false, noop: false }
 }
 
 function isInvoiceTransitionAllowed(from, to) {
@@ -516,6 +542,73 @@ app.get('/api/v1/jobs/:id/invoice-draft', async (req) => {
   }
   const draft = getInvoiceDraftByJobId(id)
   return { ok: true, draft }
+})
+
+app.get('/api/v1/jobs/:id/outbox', async (req) => {
+  const { id } = req.params
+  const job = findJobById(id)
+  if (!job) {
+    return { ok: true, items: [], noop: true }
+  }
+  return { ok: true, items: listOutboxItemsByJobId(id) }
+})
+
+app.post('/api/v1/jobs/:id/outbox', async (req, reply) => {
+  const { id } = req.params
+  const job = findJobById(id)
+  if (!job) {
+    return { ok: true, item: null, idempotent: false, noop: true }
+  }
+  const kind = req.body?.kind
+  const channel = req.body?.channel
+  if (!isAllowedOutboxKind(kind) || !isAllowedOutboxChannel(channel)) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_outbox_request',
+      message: 'kind must be "invoice" and channel must be "email"',
+    }
+  }
+  const invoiceDraft = getInvoiceDraftByJobId(id)
+  if (!invoiceDraft) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'missing_invoice_draft',
+      message: 'invoice draft must exist before preparing an outbox item',
+    }
+  }
+  const result = createOrGetOutboxItem(job, invoiceDraft, kind, channel)
+  return { ok: true, item: result.item, idempotent: result.idempotent, noop: result.noop }
+})
+
+app.post('/api/v1/outbox/:id/ready', async (req, reply) => {
+  const { id } = req.params
+  const item = getOutboxItemById(id)
+  if (!item) {
+    return { ok: true, item: null, from: null, to: 'ready', noop: true }
+  }
+  if (!isAllowedOutboxStatus(item.status)) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_outbox_status',
+      message: 'outbox item has an unsupported status',
+    }
+  }
+  if (item.status === 'ready') {
+    return { ok: true, item, from: 'ready', to: 'ready', noop: true }
+  }
+  const now = Date.now()
+  const updated = {
+    ...item,
+    status: 'ready',
+    updatedAt: now,
+    approvedAt: now,
+  }
+  outboxItems.set(id, updated)
+  saveOutboxItem(updated)
+  return { ok: true, item: updated, from: 'draft', to: 'ready', noop: false }
 })
 
 app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {

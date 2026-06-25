@@ -118,4 +118,21 @@ export interface AIPricingSuggestion {
   jobs: Array<{ desc: string; amount: number; date: string }>;
 }
 
+export interface OutboxItem {
+  outboxId: string;
+  jobId: string;
+  invoiceId: string | null;
+  customerId: string | null;
+  customer: string;
+  kind: "invoice";
+  channel: "email";
+  status: "draft" | "ready";
+  subject: string | null;
+  body: string;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+  approvedAt: number | null;
+}
+
 export type RevenueChartDatum = { day: string; revenue: number; color: string };
