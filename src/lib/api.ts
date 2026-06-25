@@ -12,7 +12,7 @@ async function fetchJson<T>(url: string, fallback: T): Promise<T> {
 }
 
 export function listCustomers(): Promise<Customer[]> { return Promise.resolve(CUSTOMERS); }
-export function listJobs(): Promise<Job[]> { return Promise.resolve(JOBS); }
+export function listJobs(): Promise<Job[]> { return fetchJson("/api/v1/jobs", JOBS); }
 export function listCalls(): Promise<Call[]> { return Promise.resolve(CALLS); }
 export function listQuotes(): Promise<Quote[]> { return Promise.resolve(QUOTES); }
 export function listConversations(): Promise<Conversation[]> { return fetchJson("/api/v1/conversations", INBOX); }
@@ -47,4 +47,8 @@ export function snoozeActionItem(id: string, minutes: number = 60): Promise<bool
 
 export function sendConversationMessage(id: string, text: string): Promise<boolean> {
   return postJson(`/api/v1/conversations/${encodeURIComponent(id)}/messages`, { text });
+}
+
+export function updateJobStatus(id: string, status: string): Promise<boolean> {
+  return postJson(`/api/v1/jobs/${encodeURIComponent(id)}/status`, { status });
 }

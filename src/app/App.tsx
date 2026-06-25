@@ -20,7 +20,7 @@ import {
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, snoozeActionItem, sendConversationMessage } from "@/lib/api";
+import { completeActionItem, snoozeActionItem, sendConversationMessage, updateJobStatus } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -1339,7 +1339,7 @@ function JobDetailScreen({
 }: {
   jobId: string; onBack: () => void; onNavigate: (s: Screen, id?: string) => void; onSelect: (id: string) => void;
 }) {
-  const { jobs } = useJobs();
+  const { jobs, refresh: refreshJobs } = useJobs();
   const job = jobs.find(j => j.id === jobId) ?? jobs[0] ?? JOBS[0];
   const customer = CUSTOMERS.find(c => c.id === job.customerId);
 
@@ -1369,6 +1369,11 @@ function JobDetailScreen({
               <Btn variant="primary"><CheckCircle size={14} /> Approve job</Btn>
             ) : job.status === "Booked" ? (
               <Btn variant="primary"><CheckCircle size={14} /> Confirm booking</Btn>
+            ) : job.status === "Complete" ? (
+              <Btn
+                variant="primary"
+                onClick={() => { void updateJobStatus(job.id, "Ready to invoice").then(refreshJobs); }}
+              ><FileText size={14} /> Mark ready to invoice</Btn>
             ) : (
               <Btn variant="primary"><Check size={14} /> Mark complete</Btn>
             )}

@@ -20,8 +20,9 @@ export function useConversations() {
 
 export function useJobs() {
   const [jobs, setJobs] = useState<Job[]>(JOBS);
-  useEffect(() => { void listJobs().then(setJobs); }, []);
-  return { jobs, setJobs };
+  const refresh = () => { void listJobs().then(setJobs); };
+  useEffect(() => { refresh(); }, []);
+  return { jobs, setJobs, refresh };
 }
 
 export function useQuotes() {

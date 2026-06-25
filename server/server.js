@@ -1,5 +1,5 @@
 import Fastify from 'fastify'
-import { ACTION_ITEMS, INBOX } from '../src/data/seed/index.ts'
+import { ACTION_ITEMS, INBOX, JOBS } from '../src/data/seed/index.ts'
 
 const app = Fastify({ logger: false })
 const port = Number(process.env.PORT || 3001)
@@ -79,11 +79,65 @@ function nextServerMessageId() {
   return `srv-${Date.now()}-${serverMessageCounter}`
 }
 
+// Phase 4: in-memory job status overlay.
+// Keyed by Job.id; value is the new status string. Restarting the process
+// clears the overlay. We never mutate the imported JOBS seed objects.
+/** @type {Map<string, string>} */
+const jobStatusOverlay = new Map()
+
+// Allowed status transitions for jobs. Pinned in this file as the protocol
+// source of truth. Cancelled and Ready to invoice are terminal in this phase.
+const ALLOWED_JOB_TRANSITIONS = new Map([
+  ['New lead',     new Set(['Booked'])],
+  ['Booked',       new Set(['Confirmed'])],
+  ['Confirmed',    new Set(['In progress'])],
+  ['In progress',  new Set(['Complete'])],
+  ['Complete',     new Set(['Ready to invoice'])],
+  ['Needs review', new Set(['Booked', 'Cancelled'])],
+])
+
+const KNOWN_JOB_STATUSES = new Set([
+  'New lead', 'Booked', 'Confirmed', 'In progress',
+  'Complete', 'Ready to invoice', 'Needs review', 'Cancelled',
+])
+
+function effectiveJobStatus(job) {
+  const override = jobStatusOverlay.get(job.id)
+  return override !== undefined ? override : job.status
+}
+
+function applyJobStatusOverlay(jobs) {
+  return jobs.map(job => {
+    const override = jobStatusOverlay.get(job.id)
+    if (override === undefined || override === job.status) return job
+    // Shallow-copy so the imported seed object stays untouched.
+    return { ...job, status: override }
+  })
+}
+
+function parseStatusBody(body) {
+  if (body == null || typeof body !== 'object') return null
+  const raw = body.status
+  if (typeof raw !== 'string') return null
+  const status = raw.trim()
+  if (status.length === 0) return null
+  if (!KNOWN_JOB_STATUSES.has(status)) return null
+  return status
+}
+
+function isTransitionAllowed(from, to) {
+  const allowed = ALLOWED_JOB_TRANSITIONS.get(from)
+  if (!allowed) return false
+  return allowed.has(to)
+}
+
 app.get('/api/v1/health', async () => ({ ok: true }))
 
 app.get('/api/v1/action-items', async () => applyOverlay(ACTION_ITEMS))
 
 app.get('/api/v1/conversations', async () => applyConversationOverlay(INBOX))
+
+app.get('/api/v1/jobs', async () => applyJobStatusOverlay(JOBS))
 
 app.post('/api/v1/action-items/:id/complete', async (req) => {
   const { id } = req.params
@@ -134,6 +188,39 @@ app.post('/api/v1/conversations/:id/messages', async (req, reply) => {
   if (existing) existing.push(message)
   else conversationOverlay.set(id, [message])
   return { ok: true, conversationId: id, message, noop: false }
+})
+
+app.post('/api/v1/jobs/:id/status', async (req, reply) => {
+  const { id } = req.params
+  const status = parseStatusBody(req.body)
+  if (status === null) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_status',
+      message: 'status must be one of the known job status strings',
+    }
+  }
+  const job = JOBS.find(j => j.id === id)
+  if (!job) {
+    return { ok: true, id, from: null, to: status, job: null, noop: true }
+  }
+  const from = effectiveJobStatus(job)
+  if (from === status) {
+    return { ok: true, id, from, to: status, job: { ...job, status }, noop: true }
+  }
+  if (!isTransitionAllowed(from, status)) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_transition',
+      message: `cannot move job from "${from}" to "${status}"`,
+      from,
+      to: status,
+    }
+  }
+  jobStatusOverlay.set(id, status)
+  return { ok: true, id, from, to: status, job: { ...job, status }, noop: false }
 })
 
 app.listen({ port, host: '0.0.0.0' })
