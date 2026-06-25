@@ -14,7 +14,7 @@ async function fetchJson<T>(url: string, fallback: T): Promise<T> {
 export function listCustomers(): Promise<Customer[]> { return Promise.resolve(CUSTOMERS); }
 export function listJobs(): Promise<Job[]> { return fetchJson("/api/v1/jobs", JOBS); }
 export function listCalls(): Promise<Call[]> { return Promise.resolve(CALLS); }
-export function listQuotes(): Promise<Quote[]> { return Promise.resolve(QUOTES); }
+export function listQuotes(): Promise<Quote[]> { return fetchJson("/api/v1/quotes", QUOTES); }
 export function listConversations(): Promise<Conversation[]> { return fetchJson("/api/v1/conversations", INBOX); }
 export function listActionItems(): Promise<ActionItem[]> { return fetchJson("/api/v1/action-items", ACTION_ITEMS); }
 export function getConversation(id: string): Promise<Conversation | undefined> { return Promise.resolve(INBOX.find(x => x.id === id)); }
@@ -51,4 +51,8 @@ export function sendConversationMessage(id: string, text: string): Promise<boole
 
 export function updateJobStatus(id: string, status: string): Promise<boolean> {
   return postJson(`/api/v1/jobs/${encodeURIComponent(id)}/status`, { status });
+}
+
+export function convertQuoteToJob(id: string, opts?: { date?: string; time?: string }): Promise<boolean> {
+  return postJson(`/api/v1/quotes/${encodeURIComponent(id)}/convert-to-job`, opts ?? {});
 }

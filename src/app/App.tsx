@@ -20,7 +20,7 @@ import {
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, snoozeActionItem, sendConversationMessage, updateJobStatus } from "@/lib/api";
+import { completeActionItem, convertQuoteToJob, snoozeActionItem, sendConversationMessage, updateJobStatus } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -1817,7 +1817,8 @@ function QuoteDetailScreen({
 }: {
   quoteId: string; onBack: () => void; onNavigate?: (s: Screen, id?: string) => void;
 }) {
-  const { quotes } = useQuotes();
+  const { quotes, refresh: refreshQuotes } = useQuotes();
+  const { refresh: refreshJobs } = useJobs();
   const q = quotes.find(x => x.id === quoteId) ?? quotes[0] ?? QUOTES[0];
   const [approved, setApproved] = useState(q.status === "Accepted");
   const [convertStep, setConvertStep] = useState<"idle" | "choosing" | "confirmed">(
@@ -1997,7 +1998,15 @@ function QuoteDetailScreen({
           </div>
 
           <div className="flex gap-3">
-            <Btn variant="primary" onClick={() => setJobBooked(true) || setConvertStep("confirmed")}>
+            <Btn variant="primary" onClick={() => {
+              setJobBooked(true);
+              setConvertStep("confirmed");
+              void convertQuoteToJob(q.id, { date: bookingDate, time: bookingTime }).then((ok) => {
+                if (!ok) return;
+                refreshJobs();
+                refreshQuotes();
+              });
+            }}>
               <Check size={14} /> Confirm booking + send SMS
             </Btn>
             <Btn variant="ghost" onClick={() => setConvertStep("idle")}>Cancel</Btn>
@@ -2017,8 +2026,8 @@ function QuoteDetailScreen({
           </div>
           <div className="space-y-1.5 mb-4 pl-8">
             <p className="text-foreground text-xs flex items-center gap-2"><Check size={11} className="text-emerald-400" /> Job created in Jobs pipeline</p>
-            <p className="text-foreground text-xs flex items-center gap-2"><Check size={11} className="text-emerald-400" /> Calendar updated — {bookingDate} {bookingTime}</p>
-            <p className="text-foreground text-xs flex items-center gap-2"><Check size={11} className="text-emerald-400" /> Confirmation SMS sent to {q.customer}</p>
+            <p className="text-foreground text-xs flex items-center gap-2"><Check size={11} className="text-emerald-400" /> Calendar update pending — {bookingDate} {bookingTime}</p>
+            <p className="text-foreground text-xs flex items-center gap-2"><Check size={11} className="text-emerald-400" /> Confirmation SMS not sent yet to {q.customer}</p>
             <p className="text-foreground text-xs flex items-center gap-2"><Check size={11} className="text-emerald-400" /> Quote status updated to Accepted</p>
           </div>
           <div className="flex gap-2">

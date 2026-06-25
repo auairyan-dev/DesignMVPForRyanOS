@@ -27,6 +27,7 @@ export function useJobs() {
 
 export function useQuotes() {
   const [quotes, setQuotes] = useState<Quote[]>(QUOTES);
-  useEffect(() => { void listQuotes().then(setQuotes); }, []);
-  return { quotes, setQuotes };
+  const refresh = () => { void listQuotes().then(setQuotes); };
+  useEffect(() => { refresh(); }, []);
+  return { quotes, setQuotes, refresh };
 }

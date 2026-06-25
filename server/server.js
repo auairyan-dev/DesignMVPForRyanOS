@@ -1,5 +1,5 @@
 import Fastify from 'fastify'
-import { ACTION_ITEMS, INBOX, JOBS } from '../src/data/seed/index.ts'
+import { ACTION_ITEMS, CUSTOMERS, INBOX, JOBS, QUOTES } from '../src/data/seed/index.ts'
 
 const app = Fastify({ logger: false })
 const port = Number(process.env.PORT || 3001)
@@ -131,13 +131,98 @@ function isTransitionAllowed(from, to) {
   return allowed.has(to)
 }
 
+// Phase 5: in-memory quote-to-job conversion overlays.
+// `convertedJobs` is keyed by quote id; value is the converted Job-shaped
+// object (without any Phase 4 status overlay applied at storage time).
+// `quoteStatusOverlay` is keyed by quote id; value is the overlaid status
+// string (currently only used to record "Accepted" after conversion).
+// Restarting the process clears both. We never mutate the imported JOBS,
+// QUOTES, or CUSTOMERS seed objects.
+/** @type {Map<string, object>} */
+const convertedJobs = new Map()
+/** @type {Map<string, string>} */
+const quoteStatusOverlay = new Map()
+
+const CONVERTIBLE_QUOTE_STATUSES = new Set(['Accepted', 'Sent', 'Follow-up due'])
+const CONVERT_FIELD_MAX_LEN = 64
+
+function applyQuoteStatusOverlay(quotes) {
+  return quotes.map(quote => {
+    const override = quoteStatusOverlay.get(quote.id)
+    if (override === undefined || override === quote.status) return quote
+    return { ...quote, status: override }
+  })
+}
+
+function parseConvertBody(body) {
+  if (body === undefined || body === null) return { date: undefined, time: undefined }
+  if (typeof body !== 'object') return null
+  const out = { date: undefined, time: undefined }
+  for (const key of ['date', 'time']) {
+    const raw = body[key]
+    if (raw === undefined || raw === null) continue
+    if (typeof raw !== 'string') return null
+    const trimmed = raw.trim()
+    if (trimmed.length === 0) return null
+    if (raw.length > CONVERT_FIELD_MAX_LEN) return null
+    out[key] = trimmed
+  }
+  return out
+}
+
+function findCustomerSuburb(customerId) {
+  if (!customerId) return '—'
+  const c = CUSTOMERS.find(cu => cu.id === customerId)
+  return (c && c.suburb) || '—'
+}
+
+function buildJobFromQuote(quote, opts) {
+  const o = opts || {}
+  return {
+    id: `qj-${quote.id}`,
+    title: quote.jobType,
+    customer: quote.customer,
+    customerId: quote.customerId,
+    suburb: findCustomerSuburb(quote.customerId),
+    address: '—',
+    time: o.time || '—',
+    date: o.date || 'Unscheduled',
+    status: 'Booked',
+    type: quote.jobType,
+    value: quote.amount,
+    tech: 'Unassigned',
+    urgency: 'Normal',
+    source: 'Quote',
+    confidence: quote.confidence,
+    aiNote: quote.aiReason,
+  }
+}
+
+function overlaidConvertedJob(quoteId) {
+  const base = convertedJobs.get(quoteId)
+  if (!base) return null
+  const override = jobStatusOverlay.get(base.id)
+  if (override === undefined || override === base.status) return base
+  return { ...base, status: override }
+}
+
 app.get('/api/v1/health', async () => ({ ok: true }))
 
 app.get('/api/v1/action-items', async () => applyOverlay(ACTION_ITEMS))
 
 app.get('/api/v1/conversations', async () => applyConversationOverlay(INBOX))
 
-app.get('/api/v1/jobs', async () => applyJobStatusOverlay(JOBS))
+app.get('/api/v1/jobs', async () => {
+  const seedWithStatus = applyJobStatusOverlay(JOBS)
+  const extras = []
+  for (const quoteId of convertedJobs.keys()) {
+    const job = overlaidConvertedJob(quoteId)
+    if (job) extras.push(job)
+  }
+  return [...seedWithStatus, ...extras]
+})
+
+app.get('/api/v1/quotes', async () => applyQuoteStatusOverlay(QUOTES))
 
 app.post('/api/v1/action-items/:id/complete', async (req) => {
   const { id } = req.params
@@ -201,7 +286,9 @@ app.post('/api/v1/jobs/:id/status', async (req, reply) => {
       message: 'status must be one of the known job status strings',
     }
   }
-  const job = JOBS.find(j => j.id === id)
+  const seedJob = JOBS.find(j => j.id === id)
+  const convertedJob = [...convertedJobs.values()].find(j => j.id === id)
+  const job = seedJob || convertedJob
   if (!job) {
     return { ok: true, id, from: null, to: status, job: null, noop: true }
   }
@@ -221,6 +308,43 @@ app.post('/api/v1/jobs/:id/status', async (req, reply) => {
   }
   jobStatusOverlay.set(id, status)
   return { ok: true, id, from, to: status, job: { ...job, status }, noop: false }
+})
+
+app.post('/api/v1/quotes/:id/convert-to-job', async (req, reply) => {
+  const { id } = req.params
+  const parsed = parseConvertBody(req.body)
+  if (parsed === null) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_body',
+      message: `date/time must be optional non-empty strings up to ${CONVERT_FIELD_MAX_LEN} chars`,
+    }
+  }
+  const quote = QUOTES.find(q => q.id === id)
+  if (!quote) {
+    return { ok: true, quoteId: id, quote: null, job: null, idempotent: false, noop: true }
+  }
+  if (convertedJobs.has(id)) {
+    const job = overlaidConvertedJob(id)
+    const overlaidQuote = applyQuoteStatusOverlay([quote])[0]
+    return { ok: true, quoteId: id, quote: overlaidQuote, job, idempotent: true, noop: true }
+  }
+  const effectiveQuoteStatus = quoteStatusOverlay.get(id) ?? quote.status
+  if (!CONVERTIBLE_QUOTE_STATUSES.has(effectiveQuoteStatus)) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_quote_status',
+      message: `quote status "${effectiveQuoteStatus}" is not convertible`,
+      status: effectiveQuoteStatus,
+    }
+  }
+  const job = buildJobFromQuote(quote, parsed)
+  convertedJobs.set(id, job)
+  quoteStatusOverlay.set(id, 'Accepted')
+  const overlaidQuote = applyQuoteStatusOverlay([quote])[0]
+  return { ok: true, quoteId: id, quote: overlaidQuote, job, idempotent: false, noop: false }
 })
 
 app.listen({ port, host: '0.0.0.0' })
