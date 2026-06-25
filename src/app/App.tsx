@@ -4399,7 +4399,7 @@ function MobileApp() {
   const [invoicesSubmitted, setInvoicesSubmitted] = useState<Set<string>>(new Set());
   const [createJobOpen, setCreateJobOpen] = useState(false);
   const [newJob, setNewJob] = useState({ customer: "", jobType: "", suburb: "", date: "", time: "", urgency: "Normal", notes: "" });
-  const [createdJobs, setCreatedJobs] = useState<Array<typeof JOBS[0]>>([]);
+  const [createdJobs, setCreatedJobs] = useState<Job[]>([]);
   const [etaSent, setEtaSent] = useState<Record<string, string | null>>({});
   const [actionStates, setActionStates] = useState<Record<string, string>>({});
   const [aiInput, setAiInput] = useState("");
@@ -5680,7 +5680,7 @@ function MobileApp() {
             {/* Header + create button */}
             <div className="flex items-center justify-between">
               <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                {JOBS.length + createdJobs.length} jobs
+                {jobs.length + createdJobs.length} jobs
               </p>
               <button
                 className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-500 text-white text-xs font-bold active:bg-blue-400 transition-colors"
@@ -5706,7 +5706,7 @@ function MobileApp() {
             ))}
 
             {/* Existing jobs */}
-            {JOBS.map(job => {
+            {jobs.map(job => {
               const isDone = completedJobs.has(job.id);
               return (
                 <button key={job.id}
@@ -5732,9 +5732,9 @@ function MobileApp() {
         {tab === "quotes" && (
           <div className="p-4 space-y-3">
             <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-              {QUOTES.filter(q => q.status === "Needs approval").length} need approval
+              {quotes.filter(q => q.status === "Needs approval").length} need approval
             </p>
-            {QUOTES.map(q => {
+            {quotes.map(q => {
               const isSent = quoteSent.has(q.id);
               const isDraft = draftQuotes.has(q.id);
               const isSubmittedForReview = invoicesSubmitted.has(q.id);
@@ -6100,6 +6100,7 @@ function TechnicianApp({ onSubmit, onSwitchRole }: {
   onSubmit: (data: { jobId: string; customerName: string; jobTitle: string; notes: string; internalNote: string; extra: string; flagged: boolean; materials: Array<{ id: string; desc: string; cost: number }>; photos: number }) => void;
   onSwitchRole: () => void;
 }) {
+  const { jobs } = useJobs();
   type TechScreen = "home" | "job" | "notes" | "complete" | "conversation";
   const [screen, setScreen] = useState<TechScreen>("home");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -6113,7 +6114,7 @@ function TechnicianApp({ onSubmit, onSwitchRole }: {
   const [techReplies, setTechReplies] = useState<Record<string, string[]>>({});
   const [techReplyInput, setTechReplyInput] = useState("");
 
-  const myJobs = JOBS.filter(j => ["Today", "Tomorrow", "Friday"].includes(j.date));
+  const myJobs = jobs.filter(j => ["Today", "Tomorrow", "Friday"].includes(j.date));
   const job = jobs.find(j => j.id === selectedJobId) ?? JOBS.find(j => j.id === selectedJobId);
   const status = selectedJobId ? (jobStatuses[selectedJobId] || "assigned") : "assigned";
   const notes = selectedJobId ? (techNotes[selectedJobId] || { work: "", internal: "", extra: "", flagged: false }) : { work: "", internal: "", extra: "", flagged: false };
