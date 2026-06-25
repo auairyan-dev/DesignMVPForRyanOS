@@ -19,7 +19,7 @@ import {
 } from "recharts";
 import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
-import { listActionItems, listConversations } from "@/lib/api";
+import { useActionItems, useConversations } from "@/lib/use-seed-data";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -363,9 +363,7 @@ function DashboardScreen({ onNavigate, onSelect, techSubmissions = [] }: {
   const [qFilter, setQFilter] = useState("All");
   const [showDone, setShowDone] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
-  const [actionItems, setActionItems] = useState(ACTION_ITEMS);
-
-  useEffect(() => { void listActionItems().then(setActionItems); }, []);
+  const { actionItems } = useActionItems();
 
   const setState = (id: string, state: "called" | "booked" | "snoozed" | "done") =>
     setItemStates(prev => ({ ...prev, [id]: state }));
@@ -3073,7 +3071,7 @@ function GoLiveScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ─── INBOX SCREEN ────────────────────────────────────────────────────────────
 
 function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { onNavigate: (s: Screen, id?: string) => void; onSelect: (id: string) => void; initialFilter?: string; initialConvId?: string }) {
-  const [conversations, setConversations] = useState(INBOX);
+  const { conversations } = useConversations();
   const [activeId, setActiveId] = useState(() => {
     if (initialConvId && INBOX.find(c => c.id === initialConvId)) return initialConvId;
     return INBOX[0].id;
@@ -3085,7 +3083,6 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   const [msgPreview, setMsgPreview] = useState<{ recipient: string; channel: "sms" | "email"; message: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { void listConversations().then(setConversations); }, []);
 
   const isCalls = filter === "Calls";
   const conv = conversations.find(c => c.id === activeId) ?? conversations[0] ?? INBOX[0];
@@ -4420,10 +4417,10 @@ function MobileApp() {
   const goBack = () => { setScreen(tab); };
 
   const job = JOBS.find(j => j.id === selectedJobId);
-  const conv = INBOX.find(c => c.id === selectedConvId);
+  const conv = conversations.find(c => c.id === selectedConvId) ?? INBOX.find(c => c.id === selectedConvId);
   const quote = QUOTES.find(q => q.id === selectedQuoteId);
 
-  const urgentCount = INBOX.filter(c => c.status === "urgent" || c.status === "needs-human").length;
+  const urgentCount = conversations.filter(c => c.status === "urgent" || c.status === "needs-human").length;
 
   const sendAiMessage = () => {
     if (!aiInput.trim()) return;
