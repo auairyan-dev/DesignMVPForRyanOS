@@ -149,4 +149,35 @@ export interface AuthMeResponse {
   operator: Operator | null;
 }
 
+export interface SendAttempt {
+  attemptId: string;
+  outboxId: string;
+  jobId: string;
+  invoiceId: string | null;
+  customerId: string | null;
+  customer: string;
+  kind: "invoice";
+  channel: "email";
+  transport: "mock";
+  status: "dry-run" | "failed";
+  target: string | null;
+  subject: string | null;
+  body: string;
+  notes: string;
+  requestedByOperatorId: string;
+  requestedByName: string;
+  approvedByOperatorId: string | null;
+  approvedByName: string | null;
+  approvedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  attemptedAt: number | null;
+  failedAt: number | null;
+  providerMessageId: string | null;
+  providerStatus: string | null;
+  providerErrorCode: string | null;
+  providerErrorMessage: string | null;
+  dryRun: boolean;
+}
+
 export type RevenueChartDatum = { day: string; revenue: number; color: string };

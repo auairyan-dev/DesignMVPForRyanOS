@@ -116,6 +116,37 @@ db.exec(`
     expires_at_ms INTEGER NOT NULL,
     last_seen_at_ms INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS send_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    outbox_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    invoice_id TEXT NULL,
+    customer_id TEXT NULL,
+    customer TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    status TEXT NOT NULL,
+    target TEXT NULL,
+    subject TEXT NULL,
+    body TEXT NOT NULL,
+    notes TEXT NOT NULL,
+    requested_by_operator_id TEXT NOT NULL,
+    requested_by_name TEXT NOT NULL,
+    approved_by_operator_id TEXT NULL,
+    approved_by_name TEXT NULL,
+    approved_at_ms INTEGER NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    attempted_at_ms INTEGER NULL,
+    failed_at_ms INTEGER NULL,
+    provider_message_id TEXT NULL,
+    provider_status TEXT NULL,
+    provider_error_code TEXT NULL,
+    provider_error_message TEXT NULL,
+    dry_run INTEGER NOT NULL
+  );
 `)
 
 if (!hasColumn('outbox_items', 'approved_by_operator_id')) {

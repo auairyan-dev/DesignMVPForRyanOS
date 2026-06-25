@@ -1,5 +1,5 @@
 import { ACTION_ITEMS, CALLS, CUSTOMERS, INBOX, JOBS, QUOTES } from "@/data/seed";
-import type { ActionItem, AuthMeResponse, Call, Conversation, Customer, Job, Operator, OutboxItem, Quote } from "@/types/ryanos";
+import type { ActionItem, AuthMeResponse, Call, Conversation, Customer, Job, Operator, OutboxItem, Quote, SendAttempt } from "@/types/ryanos";
 
 async function fetchJson<T>(url: string, fallback: T): Promise<T> {
   try {
@@ -147,5 +147,34 @@ export async function getMe(): Promise<Operator | null> {
     return body.operator;
   } catch {
     return null;
+  }
+}
+
+export async function attemptSendOutboxItem(outboxId: string, opts?: { transport?: "mock" }): Promise<SendAttempt | null> {
+  try {
+    const res = await fetch(`/api/v1/outbox/${encodeURIComponent(outboxId)}/attempt-send`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transport: opts?.transport ?? 'mock' }),
+    });
+    if (!res.ok) return null;
+    const body = await res.json() as { attempt?: SendAttempt | null };
+    return body.attempt ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function listOutboxSendAttempts(outboxId: string): Promise<SendAttempt[]> {
+  try {
+    const res = await fetch(`/api/v1/outbox/${encodeURIComponent(outboxId)}/attempts`, {
+      credentials: 'include',
+    });
+    if (!res.ok) return [];
+    const body = await res.json() as { attempts?: SendAttempt[] };
+    return body.attempts ?? [];
+  } catch {
+    return [];
   }
 }

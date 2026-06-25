@@ -17,10 +17,10 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Operator, OutboxItem, Quote, QuoteLineItem, Screen } from "@/types/ryanos";
+import type { ActionItem, Call, Conversation, Customer, Job, NavItem, Operator, OutboxItem, Quote, QuoteLineItem, Screen, SendAttempt } from "@/types/ryanos";
 import { ACTION_ITEMS, AI_PRICE_SUGGESTIONS, CALLS, CUSTOMERS, INBOX, JOBS, NAV_ITEMS as NAV_ITEMS_DATA, QUOTES, REVENUE_CHART_DATA } from "@/data/seed";
 import { useActionItems, useConversations, useJobs, useQuotes } from "@/lib/use-seed-data";
-import { completeActionItem, convertQuoteToJob, createJobOutboxItem, getJobInvoiceDraft, getMe, listJobOutboxItems, login, logout, markOutboxItemReady, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
+import { attemptSendOutboxItem, completeActionItem, convertQuoteToJob, createJobOutboxItem, getJobInvoiceDraft, getMe, listJobOutboxItems, listOutboxSendAttempts, login, logout, markOutboxItemReady, snoozeActionItem, sendConversationMessage, updateJobInvoiceStatus, updateJobStatus } from "@/lib/api";
 
 const NAV_ITEMS = NAV_ITEMS_DATA.map((item: NavItem) => ({
   ...item,
@@ -3108,6 +3108,7 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
   const [msgPreview, setMsgPreview] = useState<{ recipient: string; channel: "sms" | "email"; message: string } | null>(null);
   const [invoiceDrafts, setInvoiceDrafts] = useState<Record<string, any | null>>({});
   const [outboxByJob, setOutboxByJob] = useState<Record<string, OutboxItem[]>>({});
+  const [attemptsByOutbox, setAttemptsByOutbox] = useState<Record<string, SendAttempt[]>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
 
@@ -3126,9 +3127,15 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
     if (outboxByJob[jobId] === undefined) {
       void listJobOutboxItems(jobId).then((items) => {
         setOutboxByJob(prev => ({ ...prev, [jobId]: items }));
+        const outboxId = items?.[0]?.outboxId;
+        if (outboxId && attemptsByOutbox[outboxId] === undefined) {
+          void listOutboxSendAttempts(outboxId).then((attempts) => {
+            setAttemptsByOutbox(prev => ({ ...prev, [outboxId]: attempts }));
+          });
+        }
       });
     }
-  }, [conv?.linkedJobId, invoiceDrafts, outboxByJob]);
+  }, [conv?.linkedJobId, invoiceDrafts, outboxByJob, attemptsByOutbox]);
 
   const reviewCount = conversations.filter(c => c.status === "needs-human" || c.status === "urgent").length;
   const urgentCount = conversations.filter(c => c.status === "urgent").length;
@@ -3651,6 +3658,20 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                         {outboxByJob[conv.linkedJobId][0].approvedByName && (
                           <p className="text-blue-300 text-xs pt-1">Marked ready by {outboxByJob[conv.linkedJobId][0].approvedByName}</p>
                         )}
+                        {attemptsByOutbox[outboxByJob[conv.linkedJobId][0].outboxId]?.length > 0 && (
+                          <div className="pt-3 space-y-2">
+                            <p className="text-blue-300 text-xs font-semibold">Transport attempt</p>
+                            {attemptsByOutbox[outboxByJob[conv.linkedJobId][0].outboxId].map((attempt) => (
+                              <div key={attempt.attemptId} className="rounded-xl border border-blue-400/10 bg-background/40 p-3 text-xs space-y-1">
+                                <p className="text-foreground"><span className="text-muted-foreground">Status:</span> {attempt.status === "dry-run" ? "Dry-run only" : attempt.status}</p>
+                                <p className="text-foreground"><span className="text-muted-foreground">Transport:</span> {attempt.transport}</p>
+                                <p className="text-foreground"><span className="text-muted-foreground">Requested by:</span> {attempt.requestedByName}</p>
+                                {attempt.approvedByName && <p className="text-foreground"><span className="text-muted-foreground">Approved by:</span> {attempt.approvedByName}</p>}
+                                <p className="text-muted-foreground">No delivery confirmation. {attempt.notes}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -3735,8 +3756,22 @@ function InboxScreen({ onNavigate, onSelect, initialFilter, initialConvId }: { o
                   </div>
                 )}
                 {conv.linkedJobId && outboxByJob[conv.linkedJobId]?.[0]?.status === "ready" && (
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     <Btn size="sm" variant="secondary">Marked ready</Btn>
+                    <Btn
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        const outboxId = outboxByJob[conv.linkedJobId!]?.[0]?.outboxId;
+                        if (!outboxId) return;
+                        void attemptSendOutboxItem(outboxId, { transport: "mock" }).then((attempt) => {
+                          if (!attempt) return;
+                          void listOutboxSendAttempts(outboxId).then((attempts) => {
+                            setAttemptsByOutbox(prev => ({ ...prev, [outboxId]: attempts }));
+                          });
+                        });
+                      }}
+                    ><Send size={12} /> Create dry-run attempt</Btn>
                   </div>
                 )}
                 {conv.journey.paymentStatus === "invoice-sent" && (

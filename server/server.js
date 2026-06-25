@@ -17,6 +17,7 @@ import {
   saveJobStatus,
   saveOutboxItem,
   saveQuoteStatus,
+  createSendAttempt,
 } from './lib/overlay-store.js'
 import {
   buildInvoiceOutboxItem,
@@ -24,6 +25,10 @@ import {
   isAllowedOutboxKind,
   isAllowedOutboxStatus,
 } from './lib/outbox.js'
+import {
+  executeTransportAttempt,
+  isAllowedTransport,
+} from './lib/transport.js'
 import {
   createSession,
   destroySession,
@@ -286,6 +291,8 @@ const invoiceOverlay = new Map(persisted.invoices)
 const invoiceDrafts = new Map(persisted.invoiceDrafts)
 /** @type {Map<string, { outboxId: string, jobId: string, invoiceId: string | null, customerId: string | null, customer: string, kind: 'invoice', channel: 'email', status: 'draft' | 'ready', subject: string | null, body: string, notes: string, createdAt: number, updatedAt: number, approvedAt: number | null }>} */
 const outboxItems = new Map(persisted.outboxItems)
+/** @type {Map<string, { attemptId: string, outboxId: string, jobId: string, invoiceId: string | null, customerId: string | null, customer: string, kind: 'invoice', channel: 'email', transport: 'mock', status: 'dry-run' | 'failed', target: string | null, subject: string | null, body: string, notes: string, requestedByOperatorId: string, requestedByName: string, approvedByOperatorId: string | null, approvedByName: string | null, approvedAt: number | null, createdAt: number, updatedAt: number, attemptedAt: number | null, failedAt: number | null, providerMessageId: string | null, providerStatus: string | null, providerErrorCode: string | null, providerErrorMessage: string | null, dryRun: boolean }>} */
+const sendAttempts = new Map(persisted.sendAttempts)
 
 const KNOWN_INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'overdue'])
 const ALLOWED_INVOICE_TRANSITIONS = new Map([
@@ -411,6 +418,14 @@ function listOutboxItemsByJobId(jobId) {
 
 function getOutboxItemById(outboxId) {
   return outboxItems.get(outboxId) || null
+}
+
+function listSendAttemptsByOutboxId(outboxId) {
+  return [...sendAttempts.values()].filter(attempt => attempt.outboxId === outboxId)
+}
+
+function getSendAttemptById(id) {
+  return sendAttempts.get(id) || null
 }
 
 function createOrGetOutboxItem(job, invoiceDraft, kind, channel) {
@@ -705,6 +720,92 @@ app.post('/api/v1/outbox/:id/ready', async (req, reply) => {
   outboxItems.set(id, updated)
   saveOutboxItem(updated)
   return { ok: true, item: updated, from: 'draft', to: 'ready', noop: false }
+})
+
+app.get('/api/v1/outbox/:id/attempts', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
+  const { id } = req.params
+  const item = getOutboxItemById(id)
+  if (!item) {
+    return { ok: true, attempts: [], noop: true }
+  }
+  return { ok: true, attempts: listSendAttemptsByOutboxId(id) }
+})
+
+app.post('/api/v1/outbox/:id/attempt-send', async (req, reply) => {
+  const operator = requireOperator(req, reply)
+  if (!operator || reply.statusCode === 401) return { ok: false, error: 'auth_required' }
+  const { id } = req.params
+  const item = getOutboxItemById(id)
+  if (!item) {
+    return { ok: true, attempt: null, noop: true }
+  }
+  const transport = typeof req.body?.transport === 'string' ? req.body.transport.trim() : 'mock'
+  if (!isAllowedTransport(transport)) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'invalid_transport',
+      message: 'transport must be "mock" in Phase 11',
+    }
+  }
+  if (item.status !== 'ready' || !item.approvedAt || !item.approvedByOperatorId || !item.approvedByName) {
+    reply.code(400)
+    return {
+      ok: false,
+      error: 'outbox_not_ready',
+      message: 'outbox item must be marked ready before a send attempt can be created',
+    }
+  }
+  const now = Date.now()
+  const draftAttempt = {
+    attemptId: `att-${crypto.randomUUID()}`,
+    outboxId: item.outboxId,
+    jobId: item.jobId,
+    invoiceId: item.invoiceId ?? null,
+    customerId: item.customerId ?? null,
+    customer: item.customer,
+    kind: item.kind,
+    channel: item.channel,
+    transport: 'mock',
+    status: 'dry-run',
+    target: null,
+    subject: item.subject ?? null,
+    body: item.body,
+    notes: 'Dry-run only. Not delivered by RyanOS.',
+    requestedByOperatorId: operator.operatorId,
+    requestedByName: operator.name,
+    approvedByOperatorId: item.approvedByOperatorId ?? null,
+    approvedByName: item.approvedByName ?? null,
+    approvedAt: item.approvedAt ?? null,
+    createdAt: now,
+    updatedAt: now,
+    attemptedAt: null,
+    failedAt: null,
+    providerMessageId: null,
+    providerStatus: null,
+    providerErrorCode: null,
+    providerErrorMessage: null,
+    dryRun: true,
+  }
+  const result = executeTransportAttempt(draftAttempt)
+  const attempt = {
+    ...draftAttempt,
+    status: result.status,
+    notes: result.notes,
+    updatedAt: Date.now(),
+    attemptedAt: result.attemptedAt,
+    failedAt: result.failedAt,
+    providerMessageId: result.providerMessageId,
+    providerStatus: result.providerStatus,
+    providerErrorCode: result.providerErrorCode,
+    providerErrorMessage: result.providerErrorMessage,
+    dryRun: result.dryRun,
+  }
+  sendAttempts.set(attempt.attemptId, attempt)
+  createSendAttempt(attempt)
+  return { ok: true, attempt }
 })
 
 app.post('/api/v1/jobs/:id/invoice-status', async (req, reply) => {

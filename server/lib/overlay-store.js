@@ -137,6 +137,32 @@ const insertOperatorRow = db.prepare(`
   VALUES (@operator_id, @business_id, @email, @name, @password_hash, @status, @created_at_ms, @last_login_at_ms)
 `)
 
+const loadSendAttemptRows = db.prepare(`
+  SELECT attempt_id, outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, transport, status, target, subject, body, notes,
+         requested_by_operator_id, requested_by_name,
+         approved_by_operator_id, approved_by_name, approved_at_ms,
+         created_at_ms, updated_at_ms, attempted_at_ms, failed_at_ms,
+         provider_message_id, provider_status, provider_error_code, provider_error_message, dry_run
+  FROM send_attempts
+  ORDER BY created_at_ms ASC, attempt_id ASC
+`)
+const insertSendAttemptRow = db.prepare(`
+  INSERT INTO send_attempts (
+    attempt_id, outbox_id, job_id, invoice_id, customer_id, customer, kind, channel, transport, status, target, subject, body, notes,
+    requested_by_operator_id, requested_by_name,
+    approved_by_operator_id, approved_by_name, approved_at_ms,
+    created_at_ms, updated_at_ms, attempted_at_ms, failed_at_ms,
+    provider_message_id, provider_status, provider_error_code, provider_error_message, dry_run
+  )
+  VALUES (
+    @attempt_id, @outbox_id, @job_id, @invoice_id, @customer_id, @customer, @kind, @channel, @transport, @status, @target, @subject, @body, @notes,
+    @requested_by_operator_id, @requested_by_name,
+    @approved_by_operator_id, @approved_by_name, @approved_at_ms,
+    @created_at_ms, @updated_at_ms, @attempted_at_ms, @failed_at_ms,
+    @provider_message_id, @provider_status, @provider_error_code, @provider_error_message, @dry_run
+  )
+`)
+
 export function loadAllOverlays() {
   const actionItems = new Map()
   for (const row of loadActionItemRows.all()) {
@@ -227,7 +253,41 @@ export function loadAllOverlays() {
     })
   }
 
-  return { actionItems, conversations, jobStatuses, convertedJobs, quoteStatuses, invoices, invoiceDrafts, outboxItems }
+  const sendAttempts = new Map()
+  for (const row of loadSendAttemptRows.all()) {
+    sendAttempts.set(row.attempt_id, {
+      attemptId: row.attempt_id,
+      outboxId: row.outbox_id,
+      jobId: row.job_id,
+      invoiceId: row.invoice_id ?? null,
+      customerId: row.customer_id ?? null,
+      customer: row.customer,
+      kind: row.kind,
+      channel: row.channel,
+      transport: row.transport,
+      status: row.status,
+      target: row.target ?? null,
+      subject: row.subject ?? null,
+      body: row.body,
+      notes: row.notes,
+      requestedByOperatorId: row.requested_by_operator_id,
+      requestedByName: row.requested_by_name,
+      approvedByOperatorId: row.approved_by_operator_id ?? null,
+      approvedByName: row.approved_by_name ?? null,
+      approvedAt: row.approved_at_ms ?? null,
+      createdAt: row.created_at_ms,
+      updatedAt: row.updated_at_ms,
+      attemptedAt: row.attempted_at_ms ?? null,
+      failedAt: row.failed_at_ms ?? null,
+      providerMessageId: row.provider_message_id ?? null,
+      providerStatus: row.provider_status ?? null,
+      providerErrorCode: row.provider_error_code ?? null,
+      providerErrorMessage: row.provider_error_message ?? null,
+      dryRun: Boolean(row.dry_run),
+    })
+  }
+
+  return { actionItems, conversations, jobStatuses, convertedJobs, quoteStatuses, invoices, invoiceDrafts, outboxItems, sendAttempts }
 }
 
 export function saveActionItemOverlay(actionItemId, entry) {
@@ -358,5 +418,38 @@ export function createOperator(operator) {
     status: operator.status,
     created_at_ms: operator.createdAt,
     last_login_at_ms: operator.lastLoginAt ?? null,
+  })
+}
+
+export function createSendAttempt(attempt) {
+  insertSendAttemptRow.run({
+    attempt_id: attempt.attemptId,
+    outbox_id: attempt.outboxId,
+    job_id: attempt.jobId,
+    invoice_id: attempt.invoiceId ?? null,
+    customer_id: attempt.customerId ?? null,
+    customer: attempt.customer,
+    kind: attempt.kind,
+    channel: attempt.channel,
+    transport: attempt.transport,
+    status: attempt.status,
+    target: attempt.target ?? null,
+    subject: attempt.subject ?? null,
+    body: attempt.body,
+    notes: attempt.notes,
+    requested_by_operator_id: attempt.requestedByOperatorId,
+    requested_by_name: attempt.requestedByName,
+    approved_by_operator_id: attempt.approvedByOperatorId ?? null,
+    approved_by_name: attempt.approvedByName ?? null,
+    approved_at_ms: attempt.approvedAt ?? null,
+    created_at_ms: attempt.createdAt,
+    updated_at_ms: attempt.updatedAt,
+    attempted_at_ms: attempt.attemptedAt ?? null,
+    failed_at_ms: attempt.failedAt ?? null,
+    provider_message_id: attempt.providerMessageId ?? null,
+    provider_status: attempt.providerStatus ?? null,
+    provider_error_code: attempt.providerErrorCode ?? null,
+    provider_error_message: attempt.providerErrorMessage ?? null,
+    dry_run: attempt.dryRun ? 1 : 0,
   })
 }
